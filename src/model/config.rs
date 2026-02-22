@@ -2,6 +2,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::env;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -208,5 +209,57 @@ impl Config {
         let content = serde_json::to_string_pretty(self).context("序列化配置失败")?;
         fs::write(path, content).with_context(|| format!("写入配置文件失败: {}", path.display()))?;
         Ok(())
+    }
+
+    /// 从环境变量覆盖配置项（用于容器化部署，如 Zeabur）
+    ///
+    /// 支持的环境变量:
+    /// - `API_KEY`: apiKey
+    /// - `HOST`: 监听地址
+    /// - `PORT`: 监听端口
+    /// - `REGION`: AWS 区域
+    /// - `AUTH_REGION`: Token 刷新区域
+    /// - `API_REGION`: API 请求区域
+    /// - `ADMIN_API_KEY`: Admin API 密钥
+    /// - `PROXY_URL`: HTTP 代理地址
+    /// - `PROXY_USERNAME`: 代理用户名
+    /// - `PROXY_PASSWORD`: 代理密码
+    /// - `LOAD_BALANCING_MODE`: 负载均衡模式
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(v) = env::var("API_KEY") {
+            self.api_key = Some(v);
+        }
+        if let Ok(v) = env::var("HOST") {
+            self.host = v;
+        }
+        if let Ok(v) = env::var("PORT") {
+            if let Ok(p) = v.parse::<u16>() {
+                self.port = p;
+            }
+        }
+        if let Ok(v) = env::var("REGION") {
+            self.region = v;
+        }
+        if let Ok(v) = env::var("AUTH_REGION") {
+            self.auth_region = Some(v);
+        }
+        if let Ok(v) = env::var("API_REGION") {
+            self.api_region = Some(v);
+        }
+        if let Ok(v) = env::var("ADMIN_API_KEY") {
+            self.admin_api_key = Some(v);
+        }
+        if let Ok(v) = env::var("PROXY_URL") {
+            self.proxy_url = Some(v);
+        }
+        if let Ok(v) = env::var("PROXY_USERNAME") {
+            self.proxy_username = Some(v);
+        }
+        if let Ok(v) = env::var("PROXY_PASSWORD") {
+            self.proxy_password = Some(v);
+        }
+        if let Ok(v) = env::var("LOAD_BALANCING_MODE") {
+            self.load_balancing_mode = v;
+        }
     }
 }

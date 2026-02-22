@@ -38,6 +38,10 @@ async fn main() {
         std::process::exit(1);
     });
 
+    // 环境变量覆盖配置（用于容器化部署）
+    let mut config = config;
+    config.apply_env_overrides();
+
     // 加载凭证（支持单对象或数组格式）
     let credentials_path = args
         .credentials
