@@ -33,12 +33,10 @@ export function ApiKeysPanel() {
   const [copiedMaster, setCopiedMaster] = useState(false)
   const [copiedUrl, setCopiedUrl] = useState(false)
 
-  const durationOptions = [
+  const quickDurationOptions = [
     { label: '1 天', days: 1 },
     { label: '3 天', days: 3 },
     { label: '7 天', days: 7 },
-    { label: '30 天', days: 30 },
-    { label: '永不过期', days: null as number | null },
   ]
 
   const calcExpiresAt = (days: number | null): string | null => {
@@ -48,11 +46,33 @@ export function ApiKeysPanel() {
     return date.toISOString()
   }
 
+  const calcExtendExpiresAt = (key: ApiKeyItem, days: number | null): string | null => {
+    if (days === null) return null
+    const base = key.expiresAt && new Date(key.expiresAt) > new Date()
+      ? new Date(key.expiresAt)
+      : new Date()
+    base.setDate(base.getDate() + days)
+    return base.toISOString()
+  }
+
   const previewExpiry = (days: number | null): string => {
     if (days === null) return '永不过期'
     const date = new Date()
     date.setDate(date.getDate() + days)
     return date.toLocaleString('zh-CN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    })
+  }
+
+  const previewExtendExpiry = (key: ApiKeyItem | null, days: number | null): string => {
+    if (days === null) return '永不过期'
+    if (!key) return ''
+    const base = key.expiresAt && new Date(key.expiresAt) > new Date()
+      ? new Date(key.expiresAt)
+      : new Date()
+    base.setDate(base.getDate() + days)
+    return base.toLocaleString('zh-CN', {
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit',
     })
@@ -134,7 +154,7 @@ export function ApiKeysPanel() {
     if (!editingKey) return
     const data: Record<string, unknown> = { name: editName || undefined }
     if (editMode === 'date') {
-      data.expiresAt = calcExpiresAt(editDuration)
+      data.expiresAt = calcExtendExpiresAt(editingKey, editDuration)
       data.spendingLimit = null // 清除额度限制
     } else {
       data.spendingLimit = editSpendingLimit
@@ -177,19 +197,11 @@ export function ApiKeysPanel() {
     if (key.spendingLimit != null) {
       setEditMode('quota')
       setEditSpendingLimit(key.spendingLimit)
-      setEditDuration(null)
+      setEditDuration(1)
     } else {
       setEditMode('date')
       setEditSpendingLimit(50)
-      if (!key.expiresAt) {
-        setEditDuration(null)
-      } else {
-        const remaining = Math.max(1, Math.ceil((new Date(key.expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
-        const closest = [1, 3, 7, 30].reduce((prev, curr) =>
-          Math.abs(curr - remaining) < Math.abs(prev - remaining) ? curr : prev
-        )
-        setEditDuration(closest)
-      }
+      setEditDuration(1)
     }
   }
 
@@ -380,7 +392,7 @@ export function ApiKeysPanel() {
               <div>
                 <label className="text-sm font-medium">有效期</label>
                 <div className="flex flex-wrap gap-2 mt-2">
-                  {durationOptions.map((opt) => (
+                  {quickDurationOptions.map((opt) => (
                     <Button
                       key={opt.label}
                       type="button"
@@ -391,7 +403,27 @@ export function ApiKeysPanel() {
                       {opt.label}
                     </Button>
                   ))}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={newDuration === null ? 'default' : 'outline'}
+                    onClick={() => setNewDuration(null)}
+                  >
+                    永不过期
+                  </Button>
                 </div>
+                {newDuration !== null && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <Input
+                      type="number"
+                      min={1}
+                      value={newDuration}
+                      onChange={(e) => setNewDuration(Math.max(1, Number(e.target.value)))}
+                      className="w-24"
+                    />
+                    <span className="text-sm text-muted-foreground">天</span>
+                  </div>
+                )}
                 <div className="text-xs text-muted-foreground mt-2">
                   <Clock className="h-3 w-3 inline mr-1" />
                   到期时间: {previewExpiry(newDuration)}
@@ -467,9 +499,14 @@ export function ApiKeysPanel() {
             </div>
             {editMode === 'date' ? (
               <div>
-                <label className="text-sm font-medium">续期（从现在起）</label>
+                <label className="text-sm font-medium">续期时长</label>
+                {editingKey?.expiresAt && new Date(editingKey.expiresAt) > new Date() && (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    当前到期: {new Date(editingKey.expiresAt).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2 mt-2">
-                  {durationOptions.map((opt) => (
+                  {quickDurationOptions.map((opt) => (
                     <Button
                       key={opt.label}
                       type="button"
@@ -480,10 +517,30 @@ export function ApiKeysPanel() {
                       {opt.label}
                     </Button>
                   ))}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={editDuration === null ? 'default' : 'outline'}
+                    onClick={() => setEditDuration(null)}
+                  >
+                    永不过期
+                  </Button>
                 </div>
+                {editDuration !== null && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <Input
+                      type="number"
+                      min={1}
+                      value={editDuration}
+                      onChange={(e) => setEditDuration(Math.max(1, Number(e.target.value)))}
+                      className="w-24"
+                    />
+                    <span className="text-sm text-muted-foreground">天</span>
+                  </div>
+                )}
                 <div className="text-xs text-muted-foreground mt-2">
                   <Clock className="h-3 w-3 inline mr-1" />
-                  到期时间: {previewExpiry(editDuration)}
+                  续期后到期: {previewExtendExpiry(editingKey, editDuration)}
                 </div>
               </div>
             ) : (
