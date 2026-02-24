@@ -262,7 +262,7 @@ export function ApiKeysPanel() {
         </Card>
       ) : (
         <div className="grid gap-3">
-          {apiKeys.map((apiKey) => {
+          {[...apiKeys].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map((apiKey) => {
             const status = getKeyStatus(apiKey)
             const usage = usageMap.get(apiKey.id)
             return (
