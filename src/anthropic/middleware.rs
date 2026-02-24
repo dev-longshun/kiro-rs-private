@@ -17,11 +17,13 @@ use crate::model::usage::UsageTracker;
 
 use super::types::ErrorResponse;
 
-/// API Key 身份标识（注入到 request extensions）
-#[derive(Debug, Clone)]
-pub struct ApiKeyIdentity {
-    /// Key ID（0 = 主密钥）
-    pub key_id: u32,
+/// 已认证的 API Key 上下文（注入到 request extensions）
+#[derive(Clone, Debug)]
+pub struct ApiKeyContext {
+    /// API Key ID（0 = 主密钥）
+    pub id: u32,
+    /// 额度限制（美元），None 表示不限额
+    pub spending_limit: Option<f64>,
 }
 
 /// 应用共享状态
@@ -29,13 +31,13 @@ pub struct ApiKeyIdentity {
 pub struct AppState {
     /// 主 API 密钥（始终有效，不可禁用）
     pub api_key: String,
-    /// API Key 管理器（多用户 key）
-    pub api_key_manager: Option<Arc<ApiKeyManager>>,
     /// Kiro Provider（可选，用于实际 API 调用）
     pub kiro_provider: Option<Arc<KiroProvider>>,
     /// Profile ARN（可选，用于请求）
     pub profile_arn: Option<String>,
-    /// 用量追踪器
+    /// API Key 管理器（可选，启用多用户 API Key）
+    pub api_key_manager: Option<Arc<ApiKeyManager>>,
+    /// 用量追踪器（可选，启用用量追踪）
     pub usage_tracker: Option<Arc<UsageTracker>>,
 }
 
@@ -44,17 +46,11 @@ impl AppState {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
-            api_key_manager: None,
             kiro_provider: None,
             profile_arn: None,
+            api_key_manager: None,
             usage_tracker: None,
         }
-    }
-
-    /// 设置 API Key 管理器
-    pub fn with_api_key_manager(mut self, manager: Arc<ApiKeyManager>) -> Self {
-        self.api_key_manager = Some(manager);
-        self
     }
 
     /// 设置 KiroProvider
@@ -69,6 +65,12 @@ impl AppState {
         self
     }
 
+    /// 设置 API Key 管理器
+    pub fn with_api_key_manager(mut self, manager: Arc<ApiKeyManager>) -> Self {
+        self.api_key_manager = Some(manager);
+        self
+    }
+
     /// 设置用量追踪器
     pub fn with_usage_tracker(mut self, tracker: Arc<UsageTracker>) -> Self {
         self.usage_tracker = Some(tracker);
@@ -79,11 +81,12 @@ impl AppState {
 /// API Key 认证中间件
 ///
 /// 认证优先级：
-/// 1. 主密钥（config.apiKey）→ 始终有效
-/// 2. 用户 key（api_keys.json）→ 检查 enabled + 过期时间
+/// 1. 主密钥（config.apiKey）→ 直接放行，id=0
+/// 2. 子 API Key（ApiKeyManager）→ 检查启用/过期/额度
+/// 3. 都不匹配 → 401
 pub async fn auth_middleware(
     State(state): State<AppState>,
-    request: Request<Body>,
+    mut request: Request<Body>,
     next: Next,
 ) -> Response {
     let Some(key) = auth::extract_api_key(&request) else {
@@ -91,53 +94,69 @@ pub async fn auth_middleware(
         return (StatusCode::UNAUTHORIZED, Json(error)).into_response();
     };
 
-    // 先检查主密钥
+    // 1. 主密钥匹配 → 直接放行
     if auth::constant_time_eq(&key, &state.api_key) {
-        let mut request = request;
-        request
-            .extensions_mut()
-            .insert(ApiKeyIdentity { key_id: 0 });
+        request.extensions_mut().insert(ApiKeyContext {
+            id: 0,
+            spending_limit: None,
+        });
         return next.run(request).await;
     }
 
-    // 再检查用户 key
+    // 2. 尝试子 API Key 认证
     if let Some(manager) = &state.api_key_manager {
         match manager.authenticate(&key) {
-            ApiKeyAuthResult::Valid { id, spending_limit, .. } => {
-                // 额度检查：如果设置了 spending_limit，检查是否超额
-                if let Some(limit) = spending_limit {
-                    if let Some(tracker) = &state.usage_tracker {
-                        let total_cost = tracker.get_total_cost(id);
-                        if total_cost >= limit {
-                            let error = ErrorResponse::new(
-                                "permission_error",
-                                format!(
-                                    "API key quota exceeded: ${:.2} used of ${:.2} limit. Please contact your administrator.",
-                                    total_cost, limit
-                                ),
-                            );
-                            return (StatusCode::FORBIDDEN, Json(error)).into_response();
-                        }
+            ApiKeyAuthResult::Valid { id, name, spending_limit } => {
+                // 额度检查
+                if let (Some(limit), Some(tracker)) = (spending_limit, &state.usage_tracker) {
+                    let total_cost = tracker.get_total_cost(id);
+                    if total_cost >= limit {
+                        tracing::warn!(
+                            api_key_id = id,
+                            api_key_name = %name,
+                            total_cost = total_cost,
+                            spending_limit = limit,
+                            "API Key 额度已用尽"
+                        );
+                        let error = ErrorResponse::new(
+                            "forbidden",
+                            format!(
+                                "API key spending limit exceeded. Used: ${:.2}, Limit: ${:.2}",
+                                total_cost, limit
+                            ),
+                        );
+                        return (StatusCode::FORBIDDEN, Json(error)).into_response();
                     }
                 }
-                let mut request = request;
-                request
-                    .extensions_mut()
-                    .insert(ApiKeyIdentity { key_id: id });
+
+                tracing::debug!(api_key_id = id, api_key_name = %name, "子 API Key 认证通过");
+                request.extensions_mut().insert(ApiKeyContext {
+                    id,
+                    spending_limit,
+                });
                 return next.run(request).await;
             }
-            ApiKeyAuthResult::Disabled => {
-                let error = ErrorResponse::new("permission_error", "API key has been disabled");
-                return (StatusCode::FORBIDDEN, Json(error)).into_response();
-            }
             ApiKeyAuthResult::Expired => {
-                let error = ErrorResponse::new("permission_error", "API key has expired");
+                let error = ErrorResponse::new(
+                    "forbidden",
+                    "API key has expired. Please contact the administrator to renew it.",
+                );
                 return (StatusCode::FORBIDDEN, Json(error)).into_response();
             }
-            ApiKeyAuthResult::NotFound => {}
+            ApiKeyAuthResult::Disabled => {
+                let error = ErrorResponse::new(
+                    "forbidden",
+                    "API key has been disabled. Please contact the administrator.",
+                );
+                return (StatusCode::FORBIDDEN, Json(error)).into_response();
+            }
+            ApiKeyAuthResult::NotFound => {
+                // 继续到下面的通用 401
+            }
         }
     }
 
+    // 3. 都不匹配
     let error = ErrorResponse::authentication_error();
     (StatusCode::UNAUTHORIZED, Json(error)).into_response()
 }

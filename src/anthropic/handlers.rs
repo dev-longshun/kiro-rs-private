@@ -23,7 +23,7 @@ use tokio::time::interval;
 use uuid::Uuid;
 
 use super::converter::{ConversionError, convert_request};
-use super::middleware::{AppState, ApiKeyIdentity};
+use super::middleware::{AppState, ApiKeyContext};
 use super::stream::{BufferedStreamContext, SseEvent, StreamContext};
 use super::types::{CountTokensRequest, CountTokensResponse, ErrorResponse, MessagesRequest, Model, ModelsResponse, OutputConfig, Thinking};
 use super::websearch;
@@ -304,7 +304,7 @@ pub async fn get_model(
 /// 创建消息（对话）
 pub async fn post_messages(
     State(state): State<AppState>,
-    identity: Option<Extension<ApiKeyIdentity>>,
+    identity: Option<Extension<ApiKeyContext>>,
     JsonExtractor(mut payload): JsonExtractor<MessagesRequest>,
 ) -> Response {
     tracing::info!(
@@ -408,7 +408,7 @@ pub async fn post_messages(
         .unwrap_or(false);
 
     // 提取用量追踪信息
-    let api_key_id = identity.map(|ext| ext.0.key_id);
+    let api_key_id = identity.map(|ext| ext.0.id);
     let usage_tracker = state.usage_tracker.clone();
 
     if payload.stream {
@@ -812,7 +812,7 @@ pub async fn count_tokens(
 /// - message_start 中的 input_tokens 是从 contextUsageEvent 计算的准确值
 pub async fn post_messages_cc(
     State(state): State<AppState>,
-    identity: Option<Extension<ApiKeyIdentity>>,
+    identity: Option<Extension<ApiKeyContext>>,
     JsonExtractor(mut payload): JsonExtractor<MessagesRequest>,
 ) -> Response {
     tracing::info!(
@@ -917,7 +917,7 @@ pub async fn post_messages_cc(
         .unwrap_or(false);
 
     // 提取用量追踪信息
-    let api_key_id = identity.map(|ext| ext.0.key_id);
+    let api_key_id = identity.map(|ext| ext.0.id);
     let usage_tracker = state.usage_tracker.clone();
 
     if payload.stream {

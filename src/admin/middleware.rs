@@ -25,9 +25,9 @@ pub struct AdminState {
     pub master_api_key: Option<String>,
     /// Admin 服务
     pub service: Arc<AdminService>,
-    /// API Key 管理器
+    /// API Key 管理器（可选）
     pub api_key_manager: Option<Arc<ApiKeyManager>>,
-    /// 用量追踪器
+    /// 用量追踪器（可选）
     pub usage_tracker: Option<Arc<UsageTracker>>,
 }
 

@@ -107,35 +107,45 @@ async fn main() {
         tls_backend: config.tls_backend,
     });
 
-    // 构建 Anthropic API 路由（从第一个凭据获取 profile_arn）
-    // 加载 API Key 管理器（api_keys.json 与配置文件同目录）
-    let api_keys_path = std::path::Path::new(&config_path)
-        .parent()
-        .unwrap_or(std::path::Path::new("."))
-        .join("api_keys.json");
-    let api_key_manager = ApiKeyManager::load(&api_keys_path).unwrap_or_else(|e| {
-        tracing::error!("加载 API Keys 失败: {}", e);
-        std::process::exit(1);
-    });
-    let api_key_manager = Arc::new(api_key_manager);
-    tracing::info!("已加载 {} 个用户 API Key", api_key_manager.list().len());
+    // 初始化 API Key 管理器和用量追踪器（Admin 启用时才加载）
+    let admin_key_valid = config
+        .admin_api_key
+        .as_ref()
+        .map(|k| !k.trim().is_empty())
+        .unwrap_or(false);
 
-    // 加载用量追踪器（api_key_usage.json 与配置文件同目录）
-    let usage_path = std::path::Path::new(&config_path)
-        .parent()
-        .unwrap_or(std::path::Path::new("."))
-        .join("api_key_usage.json");
-    let usage_tracker = UsageTracker::load(&usage_path).unwrap_or_else(|e| {
-        tracing::error!("加载用量记录失败: {}", e);
-        std::process::exit(1);
-    });
-    let usage_tracker = Arc::new(usage_tracker);
-    tracing::info!("用量追踪已启用: {}", usage_path.display());
+    let (api_key_manager, usage_tracker) = if admin_key_valid {
+        let data_dir = std::path::Path::new(&config_path)
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+
+        let manager = ApiKeyManager::load(data_dir.join("api_keys.json"))
+            .unwrap_or_else(|e| {
+                tracing::error!("加载 API Key 数据失败: {}", e);
+                std::process::exit(1);
+            });
+        let manager = Arc::new(manager);
+
+        let tracker = UsageTracker::load(data_dir.join("api_key_usage.json"))
+            .unwrap_or_else(|e| {
+                tracing::error!("加载用量数据失败: {}", e);
+                std::process::exit(1);
+            });
+        let tracker = Arc::new(tracker);
+
+        tracing::info!("API Key 多用户管理已启用");
+        (Some(manager), Some(tracker))
+    } else {
+        (None, None)
+    };
 
     let mut anthropic_app_state = anthropic::middleware::AppState::new(&api_key);
-    anthropic_app_state = anthropic_app_state
-        .with_api_key_manager(api_key_manager.clone())
-        .with_usage_tracker(usage_tracker.clone());
+    if let Some(ref manager) = api_key_manager {
+        anthropic_app_state = anthropic_app_state.with_api_key_manager(manager.clone());
+    }
+    if let Some(ref tracker) = usage_tracker {
+        anthropic_app_state = anthropic_app_state.with_usage_tracker(tracker.clone());
+    }
 
     let anthropic_app = anthropic::create_router_with_provider_and_state(
         anthropic_app_state,
@@ -144,23 +154,20 @@ async fn main() {
     );
 
     // 构建 Admin API 路由（如果配置了非空的 admin_api_key）
-    // 安全检查：空字符串被视为未配置，防止空 key 绕过认证
-    let admin_key_valid = config
-        .admin_api_key
-        .as_ref()
-        .map(|k| !k.trim().is_empty())
-        .unwrap_or(false);
-
     let app = if let Some(admin_key) = &config.admin_api_key {
         if admin_key.trim().is_empty() {
             tracing::warn!("admin_api_key 配置为空，Admin API 未启用");
             anthropic_app
         } else {
             let admin_service = admin::AdminService::new(token_manager.clone());
-            let admin_state = admin::AdminState::new(admin_key, admin_service)
-                .with_master_api_key(&api_key)
-                .with_api_key_manager(api_key_manager.clone())
-                .with_usage_tracker(usage_tracker.clone());
+            let mut admin_state = admin::AdminState::new(admin_key, admin_service)
+                .with_master_api_key(&api_key);
+            if let Some(ref manager) = api_key_manager {
+                admin_state = admin_state.with_api_key_manager(manager.clone());
+            }
+            if let Some(ref tracker) = usage_tracker {
+                admin_state = admin_state.with_usage_tracker(tracker.clone());
+            }
             let admin_app = admin::create_admin_router(admin_state);
 
             // 创建 Admin UI 路由
@@ -191,10 +198,6 @@ async fn main() {
         tracing::info!("  POST /api/admin/credentials/:index/priority");
         tracing::info!("  POST /api/admin/credentials/:index/reset");
         tracing::info!("  GET  /api/admin/credentials/:index/balance");
-        tracing::info!("  GET  /api/admin/api-keys");
-        tracing::info!("  POST /api/admin/api-keys");
-        tracing::info!("  PUT  /api/admin/api-keys/:id");
-        tracing::info!("  DELETE /api/admin/api-keys/:id");
         tracing::info!("Admin UI:");
         tracing::info!("  GET  /admin");
     }
