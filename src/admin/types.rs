@@ -237,9 +237,12 @@ impl SuccessResponse {
 pub struct CreateApiKeyRequest {
     /// 备注名称（如 "张三-月付"）
     pub name: String,
-    /// 过期时间（可选，ISO 8601 格式）
+    /// 过期时间（可选，ISO 8601 格式）— 按日期模式
     #[serde(default)]
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// 额度限制（美元）— 按额度模式
+    #[serde(default)]
+    pub spending_limit: Option<f64>,
 }
 
 /// 更新 API Key 请求
@@ -255,6 +258,9 @@ pub struct UpdateApiKeyRequest {
     /// 过期时间（null 表示永不过期）
     #[serde(default, deserialize_with = "deserialize_optional_datetime")]
     pub expires_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+    /// 额度限制（null 表示不限额）
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    pub spending_limit: Option<Option<f64>>,
 }
 
 /// 区分 JSON 中"字段缺失"与"字段为 null"
@@ -262,6 +268,17 @@ pub struct UpdateApiKeyRequest {
 fn deserialize_optional_datetime<'de, D>(
     deserializer: D,
 ) -> Result<Option<Option<chrono::DateTime<chrono::Utc>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
+}
+
+/// 区分 JSON 中"字段缺失"与"字段为 null"（f64 版本）
+/// 缺失 → None（不更新），null → Some(None)（不限额），有值 → Some(Some(limit))
+fn deserialize_optional_f64<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<f64>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

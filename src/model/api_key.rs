@@ -17,6 +17,10 @@ pub struct ApiKey {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
+    /// 额度限制（美元），None 表示不限额（按日期模式）
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spending_limit: Option<f64>,
 }
 
 fn default_enabled() -> bool {
@@ -25,7 +29,7 @@ fn default_enabled() -> bool {
 
 impl ApiKey {
     /// 生成新的 API Key
-    pub fn new(id: u32, name: String, expires_at: Option<DateTime<Utc>>) -> Self {
+    pub fn new(id: u32, name: String, expires_at: Option<DateTime<Utc>>, spending_limit: Option<f64>) -> Self {
         Self {
             id,
             key: generate_api_key(),
@@ -33,6 +37,7 @@ impl ApiKey {
             enabled: true,
             created_at: Utc::now(),
             expires_at,
+            spending_limit,
         }
     }
 
@@ -63,7 +68,7 @@ fn generate_api_key() -> String {
 /// API Key 认证结果
 pub enum ApiKeyAuthResult {
     /// 认证通过，携带 key ID 和名称
-    Valid { id: u32, name: String },
+    Valid { id: u32, name: String, spending_limit: Option<f64> },
     /// Key 已被禁用
     Disabled,
     /// Key 已过期
@@ -122,6 +127,7 @@ impl ApiKeyManager {
                     ApiKeyAuthResult::Valid {
                         id: api_key.id,
                         name: api_key.name.clone(),
+                        spending_limit: api_key.spending_limit,
                     }
                 }
             }
@@ -134,10 +140,10 @@ impl ApiKeyManager {
     }
 
     /// 创建新 key
-    pub fn create(&self, name: String, expires_at: Option<DateTime<Utc>>) -> anyhow::Result<ApiKey> {
+    pub fn create(&self, name: String, expires_at: Option<DateTime<Utc>>, spending_limit: Option<f64>) -> anyhow::Result<ApiKey> {
         let mut keys = self.keys.write();
         let next_id = keys.iter().map(|k| k.id).max().unwrap_or(0) + 1;
-        let api_key = ApiKey::new(next_id, name, expires_at);
+        let api_key = ApiKey::new(next_id, name, expires_at, spending_limit);
         keys.push(api_key.clone());
         drop(keys);
         self.save()?;
@@ -151,6 +157,7 @@ impl ApiKeyManager {
         name: Option<String>,
         enabled: Option<bool>,
         expires_at: Option<Option<DateTime<Utc>>>,
+        spending_limit: Option<Option<f64>>,
     ) -> anyhow::Result<Option<ApiKey>> {
         let mut keys = self.keys.write();
         let Some(api_key) = keys.iter_mut().find(|k| k.id == id) else {
@@ -164,6 +171,9 @@ impl ApiKeyManager {
         }
         if let Some(expires_at) = expires_at {
             api_key.expires_at = expires_at;
+        }
+        if let Some(spending_limit) = spending_limit {
+            api_key.spending_limit = spending_limit;
         }
         let updated = api_key.clone();
         drop(keys);

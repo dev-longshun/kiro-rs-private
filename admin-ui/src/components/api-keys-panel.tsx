@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Copy, Plus, Pencil, Trash2, Key, Check, Clock, BarChart3, RotateCcw } from 'lucide-react'
+import { Copy, Plus, Pencil, Trash2, Key, Check, Clock, BarChart3, RotateCcw, DollarSign } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -22,9 +22,13 @@ export function ApiKeysPanel() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [editingKey, setEditingKey] = useState<ApiKeyItem | null>(null)
   const [newName, setNewName] = useState('')
+  const [newMode, setNewMode] = useState<'date' | 'quota'>('date')
   const [newDuration, setNewDuration] = useState<number | null>(1) // 天数，null 表示永不过期
+  const [newSpendingLimit, setNewSpendingLimit] = useState(50)
   const [editName, setEditName] = useState('')
+  const [editMode, setEditMode] = useState<'date' | 'quota'>('date')
   const [editDuration, setEditDuration] = useState<number | null>(1)
+  const [editSpendingLimit, setEditSpendingLimit] = useState(50)
   const [copiedId, setCopiedId] = useState<number | null>(null)
   const [copiedMaster, setCopiedMaster] = useState(false)
   const [copiedUrl, setCopiedUrl] = useState(false)
@@ -108,14 +112,18 @@ export function ApiKeysPanel() {
     createKey(
       {
         name: newName,
-        expiresAt: calcExpiresAt(newDuration),
+        ...(newMode === 'date'
+          ? { expiresAt: calcExpiresAt(newDuration) }
+          : { spendingLimit: newSpendingLimit }),
       },
       {
         onSuccess: () => {
           toast.success('API Key 创建成功')
           setCreateDialogOpen(false)
           setNewName('')
+          setNewMode('date')
           setNewDuration(1)
+          setNewSpendingLimit(50)
         },
         onError: (err) => toast.error(`创建失败: ${extractErrorMessage(err)}`),
       }
@@ -124,14 +132,16 @@ export function ApiKeysPanel() {
 
   const handleUpdate = () => {
     if (!editingKey) return
+    const data: Record<string, unknown> = { name: editName || undefined }
+    if (editMode === 'date') {
+      data.expiresAt = calcExpiresAt(editDuration)
+      data.spendingLimit = null // 清除额度限制
+    } else {
+      data.spendingLimit = editSpendingLimit
+      data.expiresAt = null // 清除过期时间
+    }
     updateKey(
-      {
-        id: editingKey.id,
-        data: {
-          name: editName || undefined,
-          expiresAt: calcExpiresAt(editDuration),
-        },
-      },
+      { id: editingKey.id, data },
       {
         onSuccess: () => {
           toast.success('已更新')
@@ -163,15 +173,23 @@ export function ApiKeysPanel() {
   const openEdit = (key: ApiKeyItem) => {
     setEditingKey(key)
     setEditName(key.name)
-    // 根据剩余时间推算最接近的选项，默认 1 天
-    if (!key.expiresAt) {
+    // 根据 key 类型设置编辑模式
+    if (key.spendingLimit != null) {
+      setEditMode('quota')
+      setEditSpendingLimit(key.spendingLimit)
       setEditDuration(null)
     } else {
-      const remaining = Math.max(1, Math.ceil((new Date(key.expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
-      const closest = [1, 3, 7, 30].reduce((prev, curr) =>
-        Math.abs(curr - remaining) < Math.abs(prev - remaining) ? curr : prev
-      )
-      setEditDuration(closest)
+      setEditMode('date')
+      setEditSpendingLimit(50)
+      if (!key.expiresAt) {
+        setEditDuration(null)
+      } else {
+        const remaining = Math.max(1, Math.ceil((new Date(key.expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+        const closest = [1, 3, 7, 30].reduce((prev, curr) =>
+          Math.abs(curr - remaining) < Math.abs(prev - remaining) ? curr : prev
+        )
+        setEditDuration(closest)
+      }
     }
   }
 
@@ -262,12 +280,17 @@ export function ApiKeysPanel() {
                         <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                           <code>{maskKey(apiKey.key)}</code>
                           <span>创建: {formatDate(apiKey.createdAt)}</span>
-                          {apiKey.expiresAt && (
+                          {apiKey.spendingLimit != null ? (
+                            <span className="flex items-center gap-1">
+                              <DollarSign className="h-3 w-3" />
+                              额度: ${(usage?.totalCost ?? 0).toFixed(2)} / ${apiKey.spendingLimit.toFixed(2)}
+                            </span>
+                          ) : apiKey.expiresAt ? (
                             <span className="flex items-center gap-1">
                               <Clock className="h-3 w-3" />
                               到期: {formatDate(apiKey.expiresAt)}
                             </span>
-                          )}
+                          ) : null}
                         </div>
                         {/* 用量信息（始终显示） */}
                         <div className="flex items-center gap-3 mt-1.5 text-xs">
@@ -331,25 +354,69 @@ export function ApiKeysPanel() {
               />
             </div>
             <div>
-              <label className="text-sm font-medium">有效期</label>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {durationOptions.map((opt) => (
-                  <Button
-                    key={opt.label}
-                    type="button"
-                    size="sm"
-                    variant={newDuration === opt.days ? 'default' : 'outline'}
-                    onClick={() => setNewDuration(opt.days)}
-                  >
-                    {opt.label}
-                  </Button>
-                ))}
-              </div>
-              <div className="text-xs text-muted-foreground mt-2">
-                <Clock className="h-3 w-3 inline mr-1" />
-                到期时间: {previewExpiry(newDuration)}
+              <label className="text-sm font-medium">限制方式</label>
+              <div className="flex gap-2 mt-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={newMode === 'date' ? 'default' : 'outline'}
+                  onClick={() => setNewMode('date')}
+                >
+                  <Clock className="h-3.5 w-3.5 mr-1.5" />
+                  按日期
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={newMode === 'quota' ? 'default' : 'outline'}
+                  onClick={() => setNewMode('quota')}
+                >
+                  <DollarSign className="h-3.5 w-3.5 mr-1.5" />
+                  按额度
+                </Button>
               </div>
             </div>
+            {newMode === 'date' ? (
+              <div>
+                <label className="text-sm font-medium">有效期</label>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {durationOptions.map((opt) => (
+                    <Button
+                      key={opt.label}
+                      type="button"
+                      size="sm"
+                      variant={newDuration === opt.days ? 'default' : 'outline'}
+                      onClick={() => setNewDuration(opt.days)}
+                    >
+                      {opt.label}
+                    </Button>
+                  ))}
+                </div>
+                <div className="text-xs text-muted-foreground mt-2">
+                  <Clock className="h-3 w-3 inline mr-1" />
+                  到期时间: {previewExpiry(newDuration)}
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="text-sm font-medium">额度上限（美元）</label>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className="text-sm text-muted-foreground">$</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={newSpendingLimit}
+                    onChange={(e) => setNewSpendingLimit(Number(e.target.value))}
+                    className="w-32"
+                  />
+                </div>
+                <div className="text-xs text-muted-foreground mt-2">
+                  <DollarSign className="h-3 w-3 inline mr-1" />
+                  累计用量达到 ${newSpendingLimit} 后自动停用
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>取消</Button>
@@ -376,25 +443,69 @@ export function ApiKeysPanel() {
               />
             </div>
             <div>
-              <label className="text-sm font-medium">续期（从现在起）</label>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {durationOptions.map((opt) => (
-                  <Button
-                    key={opt.label}
-                    type="button"
-                    size="sm"
-                    variant={editDuration === opt.days ? 'default' : 'outline'}
-                    onClick={() => setEditDuration(opt.days)}
-                  >
-                    {opt.label}
-                  </Button>
-                ))}
-              </div>
-              <div className="text-xs text-muted-foreground mt-2">
-                <Clock className="h-3 w-3 inline mr-1" />
-                到期时间: {previewExpiry(editDuration)}
+              <label className="text-sm font-medium">限制方式</label>
+              <div className="flex gap-2 mt-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={editMode === 'date' ? 'default' : 'outline'}
+                  onClick={() => setEditMode('date')}
+                >
+                  <Clock className="h-3.5 w-3.5 mr-1.5" />
+                  按日期
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={editMode === 'quota' ? 'default' : 'outline'}
+                  onClick={() => setEditMode('quota')}
+                >
+                  <DollarSign className="h-3.5 w-3.5 mr-1.5" />
+                  按额度
+                </Button>
               </div>
             </div>
+            {editMode === 'date' ? (
+              <div>
+                <label className="text-sm font-medium">续期（从现在起）</label>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {durationOptions.map((opt) => (
+                    <Button
+                      key={opt.label}
+                      type="button"
+                      size="sm"
+                      variant={editDuration === opt.days ? 'default' : 'outline'}
+                      onClick={() => setEditDuration(opt.days)}
+                    >
+                      {opt.label}
+                    </Button>
+                  ))}
+                </div>
+                <div className="text-xs text-muted-foreground mt-2">
+                  <Clock className="h-3 w-3 inline mr-1" />
+                  到期时间: {previewExpiry(editDuration)}
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="text-sm font-medium">额度上限（美元）</label>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className="text-sm text-muted-foreground">$</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={editSpendingLimit}
+                    onChange={(e) => setEditSpendingLimit(Number(e.target.value))}
+                    className="w-32"
+                  />
+                </div>
+                <div className="text-xs text-muted-foreground mt-2">
+                  <DollarSign className="h-3 w-3 inline mr-1" />
+                  累计用量达到 ${editSpendingLimit} 后自动停用
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingKey(null)}>取消</Button>

@@ -103,7 +103,23 @@ pub async fn auth_middleware(
     // 再检查用户 key
     if let Some(manager) = &state.api_key_manager {
         match manager.authenticate(&key) {
-            ApiKeyAuthResult::Valid { id, .. } => {
+            ApiKeyAuthResult::Valid { id, spending_limit, .. } => {
+                // 额度检查：如果设置了 spending_limit，检查是否超额
+                if let Some(limit) = spending_limit {
+                    if let Some(tracker) = &state.usage_tracker {
+                        let total_cost = tracker.get_total_cost(id);
+                        if total_cost >= limit {
+                            let error = ErrorResponse::new(
+                                "permission_error",
+                                format!(
+                                    "API key quota exceeded: ${:.2} used of ${:.2} limit. Please contact your administrator.",
+                                    total_cost, limit
+                                ),
+                            );
+                            return (StatusCode::FORBIDDEN, Json(error)).into_response();
+                        }
+                    }
+                }
                 let mut request = request;
                 request
                     .extensions_mut()

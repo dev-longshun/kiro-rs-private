@@ -208,4 +208,14 @@ impl UsageTracker {
         drop(records);
         self.save()
     }
+
+    /// 获取指定 API Key 的累计费用（轻量版，仅算总费用）
+    pub fn get_total_cost(&self, api_key_id: u32) -> f64 {
+        let records = self.records.read();
+        records
+            .iter()
+            .filter(|r| r.api_key_id == api_key_id)
+            .map(|r| r.estimated_cost)
+            .sum()
+    }
 }
