@@ -1576,8 +1576,12 @@ impl MultiTokenManager {
         }
 
         // 7. 持久化（失败不阻塞，凭据已在内存中生效）
-        if let Err(e) = self.persist_credentials() {
-            tracing::warn!("添加凭据后持久化失败（凭据已在内存中生效）: {}", e);
+        match self.persist_credentials() {
+            Ok(true) => tracing::info!("凭据 #{} 已持久化到文件（共 {} 个凭据）", new_id, {
+                self.entries.lock().len()
+            }),
+            Ok(false) => tracing::warn!("凭据 #{} 未持久化（非多凭据格式或路径未设置）", new_id),
+            Err(e) => tracing::error!("凭据 #{} 持久化失败: {}", new_id, e),
         }
 
         tracing::info!("成功添加凭据 #{}", new_id);
