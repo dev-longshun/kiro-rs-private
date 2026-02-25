@@ -243,6 +243,9 @@ pub struct CreateApiKeyRequest {
     /// 额度限制（美元）— 按额度模式
     #[serde(default)]
     pub spending_limit: Option<f64>,
+    /// 有效期天数（懒激活模式）
+    #[serde(default)]
+    pub duration_days: Option<f64>,
 }
 
 /// 更新 API Key 请求
@@ -261,6 +264,9 @@ pub struct UpdateApiKeyRequest {
     /// 额度限制（null 表示不限额）
     #[serde(default, deserialize_with = "deserialize_optional_f64")]
     pub spending_limit: Option<Option<f64>>,
+    /// 有效期天数（懒激活模式）
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    pub duration_days: Option<Option<f64>>,
 }
 
 /// 区分 JSON 中"字段缺失"与"字段为 null"

@@ -21,6 +21,14 @@ pub struct ApiKey {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spending_limit: Option<f64>,
+    /// 有效期天数（懒激活模式），首次使用后才开始计时
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_days: Option<f64>,
+    /// 首次使用激活时间
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activated_at: Option<DateTime<Utc>>,
 }
 
 fn default_enabled() -> bool {
@@ -29,7 +37,13 @@ fn default_enabled() -> bool {
 
 impl ApiKey {
     /// 生成新的 API Key
-    pub fn new(id: u32, name: String, expires_at: Option<DateTime<Utc>>, spending_limit: Option<f64>) -> Self {
+    pub fn new(
+        id: u32,
+        name: String,
+        expires_at: Option<DateTime<Utc>>,
+        spending_limit: Option<f64>,
+        duration_days: Option<f64>,
+    ) -> Self {
         Self {
             id,
             key: generate_api_key(),
@@ -38,6 +52,8 @@ impl ApiKey {
             created_at: Utc::now(),
             expires_at,
             spending_limit,
+            duration_days,
+            activated_at: None,
         }
     }
 
@@ -53,10 +69,28 @@ impl ApiKey {
     }
 
     /// 检查是否已过期
+    /// 待激活状态（duration_days 有值但 activated_at 为 None）返回 false
     pub fn is_expired(&self) -> bool {
+        if self.duration_days.is_some() && self.activated_at.is_none() {
+            return false;
+        }
         self.expires_at
             .map(|exp| Utc::now() >= exp)
             .unwrap_or(false)
+    }
+
+    /// 激活 key：设置 activated_at 并计算 expires_at
+    /// 幂等操作，已激活的 key 直接跳过
+    pub fn activate(&mut self) -> bool {
+        if self.activated_at.is_some() || self.duration_days.is_none() {
+            return false;
+        }
+        let now = Utc::now();
+        let days = self.duration_days.unwrap();
+        let duration = chrono::Duration::milliseconds((days * 86_400_000.0) as i64);
+        self.activated_at = Some(now);
+        self.expires_at = Some(now + duration);
+        true
     }
 }
 /// 生成 sk- 前缀的随机 API Key
@@ -140,17 +174,17 @@ impl ApiKeyManager {
     }
 
     /// 创建新 key
-    pub fn create(&self, name: String, expires_at: Option<DateTime<Utc>>, spending_limit: Option<f64>) -> anyhow::Result<ApiKey> {
+    pub fn create(&self, name: String, expires_at: Option<DateTime<Utc>>, spending_limit: Option<f64>, duration_days: Option<f64>) -> anyhow::Result<ApiKey> {
         let mut keys = self.keys.write();
         let next_id = keys.iter().map(|k| k.id).max().unwrap_or(0) + 1;
-        let api_key = ApiKey::new(next_id, name, expires_at, spending_limit);
+        let api_key = ApiKey::new(next_id, name, expires_at, spending_limit, duration_days);
         keys.push(api_key.clone());
         drop(keys);
         self.save()?;
         Ok(api_key)
     }
 
-    /// 更新 key（name, enabled, expires_at）
+    /// 更新 key（name, enabled, expires_at, spending_limit, duration_days）
     pub fn update(
         &self,
         id: u32,
@@ -158,6 +192,7 @@ impl ApiKeyManager {
         enabled: Option<bool>,
         expires_at: Option<Option<DateTime<Utc>>>,
         spending_limit: Option<Option<f64>>,
+        duration_days: Option<Option<f64>>,
     ) -> anyhow::Result<Option<ApiKey>> {
         let mut keys = self.keys.write();
         let Some(api_key) = keys.iter_mut().find(|k| k.id == id) else {
@@ -174,6 +209,14 @@ impl ApiKeyManager {
         }
         if let Some(spending_limit) = spending_limit {
             api_key.spending_limit = spending_limit;
+        }
+        if let Some(duration_days) = duration_days {
+            api_key.duration_days = duration_days;
+            // 设置新 duration 时重置激活状态
+            api_key.activated_at = None;
+            if duration_days.is_some() {
+                api_key.expires_at = None;
+            }
         }
         let updated = api_key.clone();
         drop(keys);
@@ -197,6 +240,20 @@ impl ApiKeyManager {
     /// 获取文件路径
     pub fn file_path(&self) -> &Path {
         &self.file_path
+    }
+
+    /// 激活指定 key（幂等操作）
+    /// 已激活或非懒激活模式的 key 直接跳过
+    pub fn activate_key(&self, id: u32) -> anyhow::Result<()> {
+        let mut keys = self.keys.write();
+        let Some(api_key) = keys.iter_mut().find(|k| k.id == id) else {
+            return Ok(());
+        };
+        if api_key.activate() {
+            drop(keys);
+            self.save()?;
+        }
+        Ok(())
     }
 // APPEND_MARKER2
 }

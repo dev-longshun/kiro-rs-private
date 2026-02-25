@@ -39,45 +39,6 @@ export function ApiKeysPanel() {
     { label: '7 天', days: 7 },
   ]
 
-  const calcExpiresAt = (days: number | null): string | null => {
-    if (days === null) return null
-    const date = new Date()
-    date.setDate(date.getDate() + days)
-    return date.toISOString()
-  }
-
-  const calcExtendExpiresAt = (key: ApiKeyItem, days: number | null): string | null => {
-    if (days === null) return null
-    const base = key.expiresAt && new Date(key.expiresAt) > new Date()
-      ? new Date(key.expiresAt)
-      : new Date()
-    base.setDate(base.getDate() + days)
-    return base.toISOString()
-  }
-
-  const previewExpiry = (days: number | null): string => {
-    if (days === null) return '永不过期'
-    const date = new Date()
-    date.setDate(date.getDate() + days)
-    return date.toLocaleString('zh-CN', {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit',
-    })
-  }
-
-  const previewExtendExpiry = (key: ApiKeyItem | null, days: number | null): string => {
-    if (days === null) return '永不过期'
-    if (!key) return ''
-    const base = key.expiresAt && new Date(key.expiresAt) > new Date()
-      ? new Date(key.expiresAt)
-      : new Date()
-    base.setDate(base.getDate() + days)
-    return base.toLocaleString('zh-CN', {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit',
-    })
-  }
-
   const { data: apiKeys, isLoading } = useApiKeys()
   const { data: serverInfo } = useServerInfo()
   const { data: usageData } = useAllUsage()
@@ -122,9 +83,10 @@ export function ApiKeysPanel() {
     toast.success('已复制到剪贴板')
   }
 
-  const getKeyStatus = (key: ApiKeyItem): 'active' | 'disabled' | 'expired' => {
+  const getKeyStatus = (key: ApiKeyItem): 'active' | 'disabled' | 'expired' | 'pending' => {
     if (!key.enabled) return 'disabled'
     if (key.expiresAt && new Date(key.expiresAt) <= new Date()) return 'expired'
+    if (key.durationDays != null && !key.activatedAt) return 'pending'
     return 'active'
   }
 
@@ -133,7 +95,9 @@ export function ApiKeysPanel() {
       {
         name: newName,
         ...(newMode === 'date'
-          ? { expiresAt: calcExpiresAt(newDuration) }
+          ? newDuration !== null
+            ? { durationDays: newDuration }
+            : {}
           : { spendingLimit: newSpendingLimit }),
       },
       {
@@ -154,11 +118,18 @@ export function ApiKeysPanel() {
     if (!editingKey) return
     const data: Record<string, unknown> = { name: editName || undefined }
     if (editMode === 'date') {
-      data.expiresAt = calcExtendExpiresAt(editingKey, editDuration)
+      if (editDuration !== null) {
+        data.durationDays = editDuration
+        data.expiresAt = null // 清除旧模式过期时间
+      } else {
+        data.durationDays = null
+        data.expiresAt = null
+      }
       data.spendingLimit = null // 清除额度限制
     } else {
       data.spendingLimit = editSpendingLimit
       data.expiresAt = null // 清除过期时间
+      data.durationDays = null // 清除懒激活
     }
     updateKey(
       { id: editingKey.id, data },
@@ -201,7 +172,7 @@ export function ApiKeysPanel() {
     } else {
       setEditMode('date')
       setEditSpendingLimit(50)
-      setEditDuration(1)
+      setEditDuration(key.durationDays ?? 1)
     }
   }
 
@@ -278,15 +249,15 @@ export function ApiKeysPanel() {
             const status = getKeyStatus(apiKey)
             const usage = usageMap.get(apiKey.id)
             return (
-              <Card key={apiKey.id} className={status !== 'active' ? 'opacity-60' : ''}>
+              <Card key={apiKey.id} className={status === 'disabled' || status === 'expired' ? 'opacity-60' : ''}>
                 <CardContent className="py-3 px-3 sm:px-4">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div className="flex items-center gap-3 min-w-0 flex-1">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="font-medium truncate">{apiKey.name}</span>
-                          <Badge variant={status === 'active' ? 'success' : status === 'expired' ? 'warning' : 'destructive'}>
-                            {status === 'active' ? '启用' : status === 'expired' ? '已过期' : '已禁用'}
+                          <Badge variant={status === 'active' ? 'success' : status === 'pending' ? 'secondary' : status === 'expired' ? 'warning' : 'destructive'}>
+                            {status === 'active' ? '启用' : status === 'pending' ? '待激活' : status === 'expired' ? '已过期' : '已禁用'}
                           </Badge>
                         </div>
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-muted-foreground">
@@ -296,6 +267,16 @@ export function ApiKeysPanel() {
                             <span className="flex items-center gap-1">
                               <DollarSign className="h-3 w-3" />
                               额度: ${(usage?.totalCost ?? 0).toFixed(2)} / ${apiKey.spendingLimit.toFixed(2)}
+                            </span>
+                          ) : apiKey.durationDays != null && !apiKey.activatedAt ? (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              有效期: {apiKey.durationDays} 天（首次使用后激活）
+                            </span>
+                          ) : apiKey.durationDays != null && apiKey.expiresAt ? (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              到期: {formatDate(apiKey.expiresAt)}（{apiKey.durationDays}天）
                             </span>
                           ) : apiKey.expiresAt ? (
                             <span className="flex items-center gap-1">
@@ -426,7 +407,7 @@ export function ApiKeysPanel() {
                 )}
                 <div className="text-xs text-muted-foreground mt-2">
                   <Clock className="h-3 w-3 inline mr-1" />
-                  到期时间: {previewExpiry(newDuration)}
+                  {newDuration !== null ? `首次使用后 ${newDuration} 天到期` : '永不过期'}
                 </div>
               </div>
             ) : (
@@ -500,11 +481,20 @@ export function ApiKeysPanel() {
             {editMode === 'date' ? (
               <div>
                 <label className="text-sm font-medium">续期时长</label>
-                {editingKey?.expiresAt && new Date(editingKey.expiresAt) > new Date() && (
+                {editingKey?.activatedAt ? (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    已激活: {formatDate(editingKey.activatedAt)}
+                    {editingKey.expiresAt && ` · 到期: ${formatDate(editingKey.expiresAt)}`}
+                  </div>
+                ) : editingKey?.durationDays != null ? (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    待激活（{editingKey.durationDays} 天）
+                  </div>
+                ) : editingKey?.expiresAt && new Date(editingKey.expiresAt) > new Date() ? (
                   <div className="text-xs text-muted-foreground mt-1">
                     当前到期: {new Date(editingKey.expiresAt).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
                   </div>
-                )}
+                ) : null}
                 <div className="flex flex-wrap gap-2 mt-2">
                   {quickDurationOptions.map((opt) => (
                     <Button
@@ -540,7 +530,7 @@ export function ApiKeysPanel() {
                 )}
                 <div className="text-xs text-muted-foreground mt-2">
                   <Clock className="h-3 w-3 inline mr-1" />
-                  续期后到期: {previewExtendExpiry(editingKey, editDuration)}
+                  {editDuration !== null ? `首次使用后 ${editDuration} 天到期` : '永不过期'}
                 </div>
               </div>
             ) : (

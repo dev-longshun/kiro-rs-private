@@ -107,6 +107,11 @@ pub async fn auth_middleware(
     if let Some(manager) = &state.api_key_manager {
         match manager.authenticate(&key) {
             ApiKeyAuthResult::Valid { id, name, spending_limit } => {
+                // 懒激活：首次使用时激活 key
+                if let Err(e) = manager.activate_key(id) {
+                    tracing::warn!(api_key_id = id, error = %e, "激活 API Key 失败");
+                }
+
                 // 额度检查
                 if let (Some(limit), Some(tracker)) = (spending_limit, &state.usage_tracker) {
                     let total_cost = tracker.get_total_cost(id);
