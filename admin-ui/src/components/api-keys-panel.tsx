@@ -27,7 +27,7 @@ export function ApiKeysPanel() {
   const [newSpendingLimit, setNewSpendingLimit] = useState(50)
   const [editName, setEditName] = useState('')
   const [editMode, setEditMode] = useState<'date' | 'quota'>('date')
-  const [editDuration, setEditDuration] = useState<number | null>(1)
+  const [editDuration, setEditDuration] = useState<number | null | string>(1)
   const [editSpendingLimit, setEditSpendingLimit] = useState(50)
   const [copiedId, setCopiedId] = useState<number | null>(null)
   const [copiedMaster, setCopiedMaster] = useState(false)
@@ -117,10 +117,11 @@ export function ApiKeysPanel() {
 
   const handleUpdate = () => {
     if (!editingKey) return
+    const duration = editDuration === '' ? null : editDuration
     const data: Record<string, unknown> = { name: editName || undefined }
     if (editMode === 'date') {
-      if (editDuration !== null) {
-        data.durationDays = editDuration
+      if (duration !== null) {
+        data.durationDays = duration
         // 活跃 Key 不清除 expiresAt，由后端增量计算
         if (getKeyStatus(editingKey) !== 'active') {
           data.expiresAt = null
@@ -547,7 +548,10 @@ export function ApiKeysPanel() {
                       type="number"
                       min={1}
                       value={editDuration}
-                      onChange={(e) => setEditDuration(Math.max(1, Number(e.target.value)))}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setEditDuration(v === '' ? '' : Math.max(1, Number(v)))
+                      }}
                       className="w-24"
                     />
                     <span className="text-sm text-muted-foreground">天</span>
@@ -555,7 +559,7 @@ export function ApiKeysPanel() {
                 )}
                 <div className="text-xs text-muted-foreground mt-2">
                   <Clock className="h-3 w-3 inline mr-1" />
-                  {editDuration !== null
+                  {editDuration !== null && editDuration !== ''
                     ? (editingKey && getKeyStatus(editingKey) === 'active'
                         ? `将在当前到期时间上续期 ${editDuration} 天`
                         : `首次使用后 ${editDuration} 天到期`)

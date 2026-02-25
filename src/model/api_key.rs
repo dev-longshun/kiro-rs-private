@@ -218,8 +218,8 @@ impl ApiKeyManager {
         if let Some(duration_days) = duration_days {
             match duration_days {
                 Some(new_days) => {
-                    if api_key.is_active() {
-                        // 活跃 Key：在当前到期时间上增量续期
+                    if api_key.is_active() && api_key.expires_at.is_some() {
+                        // 活跃 Key（有到期时间）：在当前到期时间上增量续期
                         let extension = chrono::Duration::milliseconds((new_days * 86_400_000.0) as i64);
                         let new_expires = api_key.expires_at.unwrap() + extension;
                         api_key.expires_at = Some(new_expires);
