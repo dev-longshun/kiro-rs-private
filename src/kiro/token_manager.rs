@@ -1001,11 +1001,22 @@ impl MultiTokenManager {
         // 序列化为 pretty JSON
         let json = serde_json::to_string_pretty(&credentials).context("序列化凭据失败")?;
 
-        // 写入文件（在 Tokio runtime 内使用 block_in_place 避免阻塞 worker）
-        let write_result = if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| std::fs::write(path, &json))
-        } else {
-            std::fs::write(path, &json)
+        // 写入文件并 fsync 确保数据落盘（容器环境持久化卷必须 fsync，否则重启后数据丢失）
+        let write_result = {
+            let path = path.clone();
+            let json = json.clone();
+            let do_write = move || -> std::io::Result<()> {
+                use std::io::Write;
+                let mut file = std::fs::File::create(&path)?;
+                file.write_all(json.as_bytes())?;
+                file.sync_all()?;
+                Ok(())
+            };
+            if tokio::runtime::Handle::try_current().is_ok() {
+                tokio::task::block_in_place(do_write)
+            } else {
+                do_write()
+            }
         };
 
         if let Err(e) = write_result {
@@ -1017,7 +1028,7 @@ impl MultiTokenManager {
             anyhow::bail!(detail);
         }
 
-        tracing::debug!("已回写凭据到文件: {:?}", path);
+        tracing::debug!("已回写凭据到文件（已 fsync）: {:?}", path);
         Ok(true)
     }
 
