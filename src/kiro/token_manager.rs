@@ -1796,8 +1796,7 @@ impl MultiTokenManager {
         *self.load_balancing_mode.lock() = mode.clone();
 
         if let Err(err) = self.persist_load_balancing_mode(&mode) {
-            *self.load_balancing_mode.lock() = previous_mode;
-            return Err(err);
+            tracing::warn!("负载均衡模式持久化失败，仅当前进程生效: {}", err);
         }
 
         tracing::info!("负载均衡模式已设置为: {}", mode);
