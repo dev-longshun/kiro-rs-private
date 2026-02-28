@@ -23,11 +23,13 @@ export function ApiKeysPanel() {
   const [editingKey, setEditingKey] = useState<ApiKeyItem | null>(null)
   const [newName, setNewName] = useState('')
   const [newMode, setNewMode] = useState<'date' | 'quota'>('date')
-  const [newDuration, setNewDuration] = useState<number | null>(1) // 天数，null 表示永不过期
+  const [newDuration, setNewDuration] = useState<number | null>(1) // 数值，null 表示永不过期
+  const [newDurationUnit, setNewDurationUnit] = useState<'days' | 'hours'>('days')
   const [newSpendingLimit, setNewSpendingLimit] = useState(50)
   const [editName, setEditName] = useState('')
   const [editMode, setEditMode] = useState<'date' | 'quota'>('date')
   const [editDuration, setEditDuration] = useState<number | null | string>(1)
+  const [editDurationUnit, setEditDurationUnit] = useState<'days' | 'hours'>('days')
   const [editSpendingLimit, setEditSpendingLimit] = useState(50)
   const [copiedId, setCopiedId] = useState<number | null>(null)
   const [copiedMaster, setCopiedMaster] = useState(false)
@@ -35,10 +37,24 @@ export function ApiKeysPanel() {
   const [sortBy, setSortBy] = useState<'newest' | 'cost-desc' | 'cost-asc'>('newest')
 
   const quickDurationOptions = [
-    { label: '1 天', days: 1 },
-    { label: '3 天', days: 3 },
-    { label: '7 天', days: 7 },
+    { label: '1 小时', value: 1, unit: 'hours' as const },
+    { label: '3 小时', value: 3, unit: 'hours' as const },
+    { label: '6 小时', value: 6, unit: 'hours' as const },
+    { label: '12 小时', value: 12, unit: 'hours' as const },
+    { label: '1 天', value: 1, unit: 'days' as const },
+    { label: '3 天', value: 3, unit: 'days' as const },
+    { label: '7 天', value: 7, unit: 'days' as const },
   ]
+
+  const toDays = (value: number, unit: 'days' | 'hours') => unit === 'hours' ? value / 24 : value
+
+  const formatDuration = (days: number) => {
+    if (days < 1) {
+      const hours = Math.round(days * 24 * 100) / 100
+      return `${hours} 小时`
+    }
+    return `${days} 天`
+  }
 
   const { data: apiKeys, isLoading } = useApiKeys()
   const { data: serverInfo } = useServerInfo()
@@ -97,7 +113,7 @@ export function ApiKeysPanel() {
         name: newName,
         ...(newMode === 'date'
           ? newDuration !== null
-            ? { durationDays: newDuration }
+            ? { durationDays: toDays(newDuration, newDurationUnit) }
             : {}
           : { spendingLimit: newSpendingLimit }),
       },
@@ -108,6 +124,7 @@ export function ApiKeysPanel() {
           setNewName('')
           setNewMode('date')
           setNewDuration(1)
+          setNewDurationUnit('days')
           setNewSpendingLimit(50)
         },
         onError: (err) => toast.error(`创建失败: ${extractErrorMessage(err)}`),
@@ -121,7 +138,7 @@ export function ApiKeysPanel() {
     const data: Record<string, unknown> = { name: editName || undefined }
     if (editMode === 'date') {
       if (duration !== null) {
-        data.durationDays = duration
+        data.durationDays = toDays(Number(duration), editDurationUnit)
         // 活跃 Key 不清除 expiresAt，由后端增量计算
         if (getKeyStatus(editingKey) !== 'active') {
           data.expiresAt = null
@@ -177,7 +194,13 @@ export function ApiKeysPanel() {
     } else {
       setEditMode('date')
       setEditSpendingLimit(50)
-      setEditDuration(key.durationDays ?? 1)
+      if (key.durationDays != null && key.durationDays < 1) {
+        setEditDuration(Math.round(key.durationDays * 24 * 100) / 100)
+        setEditDurationUnit('hours')
+      } else {
+        setEditDuration(key.durationDays ?? 1)
+        setEditDurationUnit('days')
+      }
     }
   }
 
@@ -292,12 +315,12 @@ export function ApiKeysPanel() {
                           ) : apiKey.durationDays != null && !apiKey.activatedAt ? (
                             <span className="flex items-center gap-1">
                               <Clock className="h-3 w-3" />
-                              有效期: {apiKey.durationDays} 天（首次使用后激活）
+                              有效期: {formatDuration(apiKey.durationDays)}（首次使用后激活）
                             </span>
                           ) : apiKey.durationDays != null && apiKey.expiresAt ? (
                             <span className="flex items-center gap-1">
                               <Clock className="h-3 w-3" />
-                              到期: {formatDate(apiKey.expiresAt)}（{apiKey.durationDays}天）
+                              到期: {formatDate(apiKey.expiresAt)}（{formatDuration(apiKey.durationDays)}）
                             </span>
                           ) : apiKey.expiresAt ? (
                             <span className="flex items-center gap-1">
@@ -404,8 +427,8 @@ export function ApiKeysPanel() {
                       key={opt.label}
                       type="button"
                       size="sm"
-                      variant={newDuration === opt.days ? 'default' : 'outline'}
-                      onClick={() => setNewDuration(opt.days)}
+                      variant={newDuration === opt.value && newDurationUnit === opt.unit ? 'default' : 'outline'}
+                      onClick={() => { setNewDuration(opt.value); setNewDurationUnit(opt.unit) }}
                     >
                       {opt.label}
                     </Button>
@@ -428,12 +451,15 @@ export function ApiKeysPanel() {
                       onChange={(e) => setNewDuration(Math.max(1, Number(e.target.value)))}
                       className="w-24"
                     />
-                    <span className="text-sm text-muted-foreground">天</span>
+                    <div className="flex gap-1">
+                      <Button type="button" size="sm" variant={newDurationUnit === 'hours' ? 'default' : 'outline'} onClick={() => setNewDurationUnit('hours')}>小时</Button>
+                      <Button type="button" size="sm" variant={newDurationUnit === 'days' ? 'default' : 'outline'} onClick={() => setNewDurationUnit('days')}>天</Button>
+                    </div>
                   </div>
                 )}
                 <div className="text-xs text-muted-foreground mt-2">
                   <Clock className="h-3 w-3 inline mr-1" />
-                  {newDuration !== null ? `首次使用后 ${newDuration} 天到期` : '永不过期'}
+                  {newDuration !== null ? `首次使用后 ${newDuration} ${newDurationUnit === 'hours' ? '小时' : '天'}到期` : '永不过期'}
                 </div>
               </div>
             ) : (
@@ -514,7 +540,7 @@ export function ApiKeysPanel() {
                   </div>
                 ) : editingKey?.durationDays != null ? (
                   <div className="text-xs text-muted-foreground mt-1">
-                    待激活（{editingKey.durationDays} 天）
+                    待激活（{formatDuration(editingKey.durationDays)}）
                   </div>
                 ) : editingKey?.expiresAt && new Date(editingKey.expiresAt) > new Date() ? (
                   <div className="text-xs text-muted-foreground mt-1">
@@ -527,8 +553,8 @@ export function ApiKeysPanel() {
                       key={opt.label}
                       type="button"
                       size="sm"
-                      variant={editDuration === opt.days ? 'default' : 'outline'}
-                      onClick={() => setEditDuration(opt.days)}
+                      variant={editDuration === opt.value && editDurationUnit === opt.unit ? 'default' : 'outline'}
+                      onClick={() => { setEditDuration(opt.value); setEditDurationUnit(opt.unit) }}
                     >
                       {opt.label}
                     </Button>
@@ -554,15 +580,18 @@ export function ApiKeysPanel() {
                       }}
                       className="w-24"
                     />
-                    <span className="text-sm text-muted-foreground">天</span>
+                    <div className="flex gap-1">
+                      <Button type="button" size="sm" variant={editDurationUnit === 'hours' ? 'default' : 'outline'} onClick={() => setEditDurationUnit('hours')}>小时</Button>
+                      <Button type="button" size="sm" variant={editDurationUnit === 'days' ? 'default' : 'outline'} onClick={() => setEditDurationUnit('days')}>天</Button>
+                    </div>
                   </div>
                 )}
                 <div className="text-xs text-muted-foreground mt-2">
                   <Clock className="h-3 w-3 inline mr-1" />
                   {editDuration !== null && editDuration !== ''
                     ? (editingKey && getKeyStatus(editingKey) === 'active'
-                        ? `将在当前到期时间上续期 ${editDuration} 天`
-                        : `首次使用后 ${editDuration} 天到期`)
+                        ? `将在当前到期时间上续期 ${editDuration} ${editDurationUnit === 'hours' ? '小时' : '天'}`
+                        : `首次使用后 ${editDuration} ${editDurationUnit === 'hours' ? '小时' : '天'}到期`)
                     : '永不过期'}
                 </div>
               </div>
