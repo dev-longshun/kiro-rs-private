@@ -417,7 +417,7 @@ export function ApiKeysPanel() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1 sm:ml-2 self-end sm:self-auto">
-                      <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`Base URL: ${window.location.origin}\nAPI Key: ${apiKey.key}`, apiKey.id)} title="复制 URL 和 Key">
+                      <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`订单编号: ${apiKey.name}\nBase URL: ${window.location.origin}\nAPI Key: ${apiKey.key}`, apiKey.id)} title="复制 URL 和 Key">
                         {copiedId === apiKey.id ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                       </Button>
                       <Switch checked={apiKey.enabled} onCheckedChange={() => handleToggleEnabled(apiKey)} />
