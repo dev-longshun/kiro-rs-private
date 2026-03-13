@@ -13,6 +13,7 @@ use axum::{
 use crate::common::auth;
 use crate::kiro::provider::KiroProvider;
 use crate::model::api_key::{ApiKeyAuthResult, ApiKeyManager};
+use crate::model::rpm::RpmTracker;
 use crate::model::usage::UsageTracker;
 
 use super::types::ErrorResponse;
@@ -39,6 +40,8 @@ pub struct AppState {
     pub api_key_manager: Option<Arc<ApiKeyManager>>,
     /// 用量追踪器（可选，启用用量追踪）
     pub usage_tracker: Option<Arc<UsageTracker>>,
+    /// RPM 追踪器（可选，启用 RPM 实时监控）
+    pub rpm_tracker: Option<Arc<RpmTracker>>,
 }
 
 impl AppState {
@@ -50,6 +53,7 @@ impl AppState {
             profile_arn: None,
             api_key_manager: None,
             usage_tracker: None,
+            rpm_tracker: None,
         }
     }
 
@@ -74,6 +78,12 @@ impl AppState {
     /// 设置用量追踪器
     pub fn with_usage_tracker(mut self, tracker: Arc<UsageTracker>) -> Self {
         self.usage_tracker = Some(tracker);
+        self
+    }
+
+    /// 设置 RPM 追踪器
+    pub fn with_rpm_tracker(mut self, tracker: Arc<RpmTracker>) -> Self {
+        self.rpm_tracker = Some(tracker);
         self
     }
 }

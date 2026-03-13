@@ -122,8 +122,7 @@
       "Bash(trash *)"
     ],
     "deny": [
-      "Bash(git commit *)",
-      "Bash(git commit)"
+
     ],
     "ask": [
       "Bash(rm *)",

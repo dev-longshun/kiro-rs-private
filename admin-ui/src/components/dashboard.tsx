@@ -13,7 +13,7 @@ import { BatchImportDialog } from '@/components/batch-import-dialog'
 import { KamImportDialog } from '@/components/kam-import-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ApiKeysPanel } from '@/components/api-keys-panel'
-import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode } from '@/hooks/use-credentials'
+import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useRpm } from '@/hooks/use-credentials'
 import { getCredentialBalance } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import type { BalanceResponse } from '@/types/api'
@@ -50,6 +50,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
   const queryClient = useQueryClient()
   const { data, isLoading, error, refetch } = useCredentials()
+  const { data: rpmData } = useRpm()
   const { mutate: deleteCredential } = useDeleteCredential()
   const { mutate: resetFailure } = useResetFailure()
   const { data: loadBalancingData, isLoading: isLoadingMode } = useLoadBalancingMode()
@@ -552,7 +553,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         ) : (
         <>
         {/* 统计卡片 */}
-        <div className="grid gap-4 md:grid-cols-3 mb-6">
+        <div className="grid gap-4 md:grid-cols-4 mb-6">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -584,6 +585,16 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 #{data?.currentId || '-'}
                 <Badge variant="success">活跃</Badge>
               </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                全局 RPM
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-blue-600">{rpmData?.global ?? '-'}</div>
             </CardContent>
           </Card>
         </div>
@@ -687,6 +698,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                     onToggleSelect={() => toggleSelect(credential.id)}
                     balance={balanceMap.get(credential.id) || null}
                     loadingBalance={loadingBalanceIds.has(credential.id)}
+                    rpm={rpmData?.byCredential?.[String(credential.id)] ?? 0}
                   />
                 ))}
               </div>

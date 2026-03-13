@@ -98,7 +98,12 @@ async fn main() {
         std::process::exit(1);
     });
     let token_manager = Arc::new(token_manager);
-    let kiro_provider = KiroProvider::with_proxy(token_manager.clone(), proxy_config.clone());
+
+    // 创建 RPM 追踪器
+    let rpm_tracker = Arc::new(model::rpm::RpmTracker::new());
+
+    let kiro_provider = KiroProvider::with_proxy(token_manager.clone(), proxy_config.clone())
+        .with_rpm_tracker(rpm_tracker.clone());
 
     // 初始化 count_tokens 配置
     token::init_config(token::CountTokensConfig {
@@ -141,7 +146,8 @@ async fn main() {
         (None, None)
     };
 
-    let mut anthropic_app_state = anthropic::middleware::AppState::new(&api_key);
+    let mut anthropic_app_state = anthropic::middleware::AppState::new(&api_key)
+        .with_rpm_tracker(rpm_tracker.clone());
     if let Some(ref manager) = api_key_manager {
         anthropic_app_state = anthropic_app_state.with_api_key_manager(manager.clone());
     }
@@ -163,7 +169,8 @@ async fn main() {
         } else {
             let admin_service = admin::AdminService::new(token_manager.clone());
             let mut admin_state = admin::AdminState::new(admin_key, admin_service)
-                .with_master_api_key(&api_key);
+                .with_master_api_key(&api_key)
+                .with_rpm_tracker(rpm_tracker.clone());
             if let Some(ref manager) = api_key_manager {
                 admin_state = admin_state.with_api_key_manager(manager.clone());
             }

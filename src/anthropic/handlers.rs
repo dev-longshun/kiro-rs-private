@@ -314,6 +314,13 @@ pub async fn post_messages(
         message_count = %payload.messages.len(),
         "Received POST /v1/messages request"
     );
+
+    // 记录 RPM（全局 + per-API-Key）
+    if let Some(rpm_tracker) = &state.rpm_tracker {
+        let api_key_id = identity.as_ref().map(|ext| ext.0.id);
+        rpm_tracker.record_request(api_key_id);
+    }
+
     // 检查 KiroProvider 是否可用
     let provider = match &state.kiro_provider {
         Some(p) => p.clone(),

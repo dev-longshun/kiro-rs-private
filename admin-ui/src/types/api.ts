@@ -140,3 +140,10 @@ export interface ModelUsage {
   outputTokens: number
   cost: number
 }
+
+// RPM 实时监控
+export interface RpmSnapshot {
+  global: number
+  byCredential: Record<string, number>
+  byApiKey: Record<string, number>
+}

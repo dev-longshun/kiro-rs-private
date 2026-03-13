@@ -17,6 +17,7 @@ import {
   deleteApiKey,
   getAllUsage,
   resetKeyUsage,
+  getRpm,
 } from '@/api/credentials'
 import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest } from '@/types/api'
 
@@ -198,5 +199,16 @@ export function useResetKeyUsage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['apiKeyUsage'] })
     },
+  })
+}
+
+// ============ RPM 监控 Hooks ============
+
+// 查询实时 RPM 数据（每 5 秒刷新）
+export function useRpm() {
+  return useQuery({
+    queryKey: ['rpm'],
+    queryFn: getRpm,
+    refetchInterval: 5000,
   })
 }

@@ -13,6 +13,7 @@ import type {
   CreateApiKeyRequest,
   UpdateApiKeyRequest,
   UsageSummary,
+  RpmSnapshot,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -159,5 +160,13 @@ export async function getKeyUsage(id: number): Promise<UsageSummary> {
 // 重置单个 API Key 用量
 export async function resetKeyUsage(id: number): Promise<SuccessResponse> {
   const { data } = await api.delete<SuccessResponse>(`/api-keys/${id}/usage`)
+  return data
+}
+
+// ============ RPM 监控 ============
+
+// 获取实时 RPM 数据
+export async function getRpm(): Promise<RpmSnapshot> {
+  const { data } = await api.get<RpmSnapshot>('/rpm')
   return data
 }

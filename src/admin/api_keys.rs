@@ -148,3 +148,13 @@ pub async fn reset_key_usage(
         }
     }
 }
+
+/// GET /api/admin/rpm
+/// 获取实时 RPM 数据
+pub async fn get_rpm(State(state): State<AdminState>) -> impl IntoResponse {
+    let Some(rpm_tracker) = &state.rpm_tracker else {
+        let error = AdminErrorResponse::internal_error("RPM 监控未启用");
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response();
+    };
+    Json(rpm_tracker.snapshot()).into_response()
+}

@@ -31,6 +31,7 @@ interface CredentialCardProps {
   onToggleSelect: () => void
   balance: BalanceResponse | null
   loadingBalance: boolean
+  rpm?: number
 }
 
 function formatLastUsed(lastUsedAt: string | null): string {
@@ -56,6 +57,7 @@ export function CredentialCard({
   onToggleSelect,
   balance,
   loadingBalance,
+  rpm = 0,
 }: CredentialCardProps) {
   const [editingPriority, setEditingPriority] = useState(false)
   const [priorityValue, setPriorityValue] = useState(String(credential.priority))
@@ -222,6 +224,10 @@ export function CredentialCard({
             <div>
               <span className="text-muted-foreground">成功次数：</span>
               <span className="font-medium">{credential.successCount}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">RPM：</span>
+              <span className="font-medium text-blue-600">{rpm}</span>
             </div>
             <div className="col-span-2">
               <span className="text-muted-foreground">最后调用：</span>

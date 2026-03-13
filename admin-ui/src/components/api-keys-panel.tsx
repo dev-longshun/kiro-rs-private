@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Copy, Plus, Pencil, Trash2, Key, Check, Clock, BarChart3, RotateCcw, DollarSign, ArrowDownWideNarrow, Search } from 'lucide-react'
+import { Copy, Plus, Pencil, Trash2, Key, Check, Clock, BarChart3, RotateCcw, DollarSign, ArrowDownWideNarrow, Search, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,7 +14,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { useApiKeys, useCreateApiKey, useUpdateApiKey, useDeleteApiKey, useServerInfo, useAllUsage, useResetKeyUsage } from '@/hooks/use-credentials'
+import { useQueryClient } from '@tanstack/react-query'
+import { useApiKeys, useCreateApiKey, useUpdateApiKey, useDeleteApiKey, useServerInfo, useAllUsage, useResetKeyUsage, useRpm } from '@/hooks/use-credentials'
+import { deleteApiKey as deleteApiKeyApi } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import type { ApiKeyItem, UsageSummary } from '@/types/api'
 
@@ -36,6 +38,8 @@ export function ApiKeysPanel() {
   const [copiedUrl, setCopiedUrl] = useState(false)
   const [sortBy, setSortBy] = useState<'newest' | 'cost-desc' | 'cost-asc'>('newest')
   const [searchQuery, setSearchQuery] = useState('')
+  const [purgeDialogOpen, setPurgeDialogOpen] = useState(false)
+  const [purging, setPurging] = useState(false)
 
   const quickDurationOptions = [
     { label: '1 小时', value: 1, unit: 'hours' as const },
@@ -60,6 +64,8 @@ export function ApiKeysPanel() {
   const { data: apiKeys, isLoading } = useApiKeys()
   const { data: serverInfo } = useServerInfo()
   const { data: usageData, dataUpdatedAt } = useAllUsage()
+  const { data: rpmData } = useRpm()
+  const queryClient = useQueryClient()
   const { mutate: createKey, isPending: isCreating } = useCreateApiKey()
   const { mutate: updateKey } = useUpdateApiKey()
   const { mutate: deleteKey } = useDeleteApiKey()
@@ -86,6 +92,38 @@ export function ApiKeysPanel() {
       onError: (err) => toast.error(extractErrorMessage(err)),
     })
   }
+
+  const getKeyStatus = (key: ApiKeyItem): 'active' | 'disabled' | 'expired' | 'pending' => {
+    if (!key.enabled) return 'disabled'
+    if (key.expiresAt && new Date(key.expiresAt) <= new Date()) return 'expired'
+    if (key.durationDays != null && !key.activatedAt) return 'pending'
+    return 'active'
+  }
+
+  // 获取所有无效 Key（已禁用 + 已过期）
+  const invalidKeys = (apiKeys ?? []).filter((k) => {
+    const s = getKeyStatus(k)
+    return s === 'disabled' || s === 'expired'
+  })
+
+  const handlePurge = async () => {
+    setPurging(true)
+    let deleted = 0
+    for (const key of invalidKeys) {
+      try {
+        await deleteApiKeyApi(key.id)
+        deleted++
+      } catch {
+        // 单个失败不中断
+      }
+    }
+    setPurging(false)
+    setPurgeDialogOpen(false)
+    queryClient.invalidateQueries({ queryKey: ['apiKeys'] })
+    queryClient.invalidateQueries({ queryKey: ['apiKeyUsage'] })
+    toast.success(`已清除 ${deleted} 个无效 Key`)
+  }
+
   const copyToClipboard = async (text: string, target: 'url' | 'master' | number) => {
     await navigator.clipboard.writeText(text)
     if (target === 'url') {
@@ -99,13 +137,6 @@ export function ApiKeysPanel() {
       setTimeout(() => setCopiedId(null), 2000)
     }
     toast.success('已复制到剪贴板')
-  }
-
-  const getKeyStatus = (key: ApiKeyItem): 'active' | 'disabled' | 'expired' | 'pending' => {
-    if (!key.enabled) return 'disabled'
-    if (key.expiresAt && new Date(key.expiresAt) <= new Date()) return 'expired'
-    if (key.durationDays != null && !key.activatedAt) return 'pending'
-    return 'active'
   }
 
   const handleCreate = () => {
@@ -293,6 +324,59 @@ export function ApiKeysPanel() {
         </CardContent>
       </Card>
 
+      {/* 统计卡片 */}
+      {(() => {
+        const all = apiKeys ?? []
+        const active = all.filter((k) => getKeyStatus(k) === 'active').length
+        const pending = all.filter((k) => getKeyStatus(k) === 'pending').length
+        const disabled = all.filter((k) => getKeyStatus(k) === 'disabled').length
+        const expired = all.filter((k) => getKeyStatus(k) === 'expired').length
+        return (
+          <div className="grid gap-4 grid-cols-2 md:grid-cols-5">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">总数</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{all.length}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">启用中</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-600">{active}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">待激活</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-gray-500">{pending}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">已禁用</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-red-600">{disabled}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">已过期</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-orange-500">{expired}</div>
+              </CardContent>
+            </Card>
+          </div>
+        )
+      })()}
+
       {/* API Key 列表 */}
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">API Key 管理</h2>
@@ -307,6 +391,12 @@ export function ApiKeysPanel() {
             <Plus className="h-4 w-4 mr-2" />
             创建 Key
           </Button>
+          {invalidKeys.length > 0 && (
+            <Button variant="outline" size="sm" onClick={() => setPurgeDialogOpen(true)}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              清除无效 ({invalidKeys.length})
+            </Button>
+          )}
         </div>
       </div>
       <div className="relative">
@@ -390,6 +480,9 @@ export function ApiKeysPanel() {
                           <span className="flex items-center gap-1 text-muted-foreground">
                             <BarChart3 className="h-3 w-3" />
                             {usage?.totalRequests ?? 0} 次请求
+                          </span>
+                          <span className="text-blue-600 dark:text-blue-400 font-medium">
+                            RPM {rpmData?.byApiKey?.[String(apiKey.id)] ?? 0}
                           </span>
                           <span className="text-muted-foreground">
                             入 {formatTokens(usage?.totalInputTokens ?? 0)} / 出 {formatTokens(usage?.totalOutputTokens ?? 0)}
@@ -694,6 +787,37 @@ export function ApiKeysPanel() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingKey(null)}>取消</Button>
             <Button onClick={handleUpdate}>保存</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 清除无效 Key 对话框 */}
+      <Dialog open={purgeDialogOpen} onOpenChange={(open) => !purging && setPurgeDialogOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>清除无效 API Key</DialogTitle>
+            <DialogDescription>
+              将删除以下 {invalidKeys.length} 个已禁用或已过期的 Key，此操作不可撤销。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-60 overflow-y-auto space-y-1 text-sm">
+            {invalidKeys.map((k) => (
+              <div key={k.id} className="flex items-center justify-between py-1 px-2 rounded bg-muted/50">
+                <span>
+                  <code className="text-xs font-mono text-muted-foreground mr-2">{String(k.id).padStart(3, '0')}</code>
+                  {k.name}
+                </span>
+                <Badge variant={getKeyStatus(k) === 'disabled' ? 'destructive' : 'warning'} className="text-xs">
+                  {getKeyStatus(k) === 'disabled' ? '已禁用' : '已过期'}
+                </Badge>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPurgeDialogOpen(false)} disabled={purging}>取消</Button>
+            <Button variant="destructive" onClick={handlePurge} disabled={purging}>
+              {purging ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />清除中...</> : `确认清除 (${invalidKeys.length})`}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
