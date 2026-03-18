@@ -27,9 +27,6 @@ const MAX_RETRIES_PER_CREDENTIAL: usize = 3;
 /// 总重试次数硬上限（避免无限重试）
 const MAX_TOTAL_RETRIES: usize = 9;
 
-/// 最大并发请求数（同时发往上游的请求上限）
-const MAX_CONCURRENT_REQUESTS: usize = 50;
-
 /// Kiro API Provider
 ///
 /// 核心组件，负责与 Kiro API 通信
@@ -57,19 +54,28 @@ impl KiroProvider {
 
     /// 创建带代理配置的 KiroProvider 实例
     pub fn with_proxy(token_manager: Arc<MultiTokenManager>, proxy: Option<ProxyConfig>) -> Self {
-        let tls_backend = token_manager.config().tls_backend;
+        let config = token_manager.config();
+        let tls_backend = config.tls_backend;
+        let max_concurrent = config.max_concurrent_requests;
+        let pool_max_idle = config.pool_max_idle_per_host;
         // 预热：构建全局代理对应的 Client
-        let initial_client = build_client(proxy.as_ref(), 180, tls_backend)
+        let initial_client = build_client(proxy.as_ref(), 180, tls_backend, pool_max_idle)
             .expect("创建 HTTP 客户端失败");
         let mut cache = HashMap::new();
         cache.insert(proxy.clone(), initial_client);
+
+        tracing::info!(
+            "KiroProvider 初始化: max_concurrent_requests={}, pool_max_idle_per_host={}",
+            max_concurrent,
+            pool_max_idle
+        );
 
         Self {
             token_manager,
             global_proxy: proxy,
             client_cache: Mutex::new(cache),
             tls_backend,
-            concurrency_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
+            concurrency_limit: Arc::new(Semaphore::new(max_concurrent)),
             rpm_tracker: None,
         }
     }
@@ -87,7 +93,8 @@ impl KiroProvider {
         if let Some(client) = cache.get(&effective) {
             return Ok(client.clone());
         }
-        let client = build_client(effective.as_ref(), 180, self.tls_backend)?;
+        let pool_max_idle = self.token_manager.config().pool_max_idle_per_host;
+        let client = build_client(effective.as_ref(), 180, self.tls_backend, pool_max_idle)?;
         cache.insert(effective, client.clone());
         Ok(client)
     }
@@ -304,7 +311,6 @@ impl KiroProvider {
 
     /// 内部方法：带重试逻辑的 MCP API 调用
     async fn call_mcp_with_retry(&self, request_body: &str) -> anyhow::Result<reqwest::Response> {
-        let _permit = self.concurrency_limit.acquire().await?;
         let total_credentials = self.token_manager.total_count();
         let max_retries = (total_credentials * MAX_RETRIES_PER_CREDENTIAL).min(MAX_TOTAL_RETRIES);
         let mut last_error: Option<anyhow::Error> = None;
@@ -329,6 +335,9 @@ impl KiroProvider {
                 }
             };
 
+            // 获取信号量 permit，仅包裹 HTTP 发送阶段
+            let permit = self.concurrency_limit.acquire().await?;
+
             // 发送请求
             let response = match self
                 .client_for(&ctx.credentials)?
@@ -340,6 +349,8 @@ impl KiroProvider {
             {
                 Ok(resp) => resp,
                 Err(e) => {
+                    // 释放 permit 后再 sleep
+                    drop(permit);
                     tracing::warn!(
                         "MCP 请求发送失败（尝试 {}/{}）: {}",
                         attempt + 1,
@@ -356,7 +367,7 @@ impl KiroProvider {
 
             let status = response.status();
 
-            // 成功响应
+            // 成功响应 — permit 随函数返回自然 drop
             if status.is_success() {
                 self.token_manager.report_success(ctx.id);
                 if let Some(rpm) = &self.rpm_tracker {
@@ -365,7 +376,8 @@ impl KiroProvider {
                 return Ok(response);
             }
 
-            // 失败响应
+            // 失败响应：释放 permit 后再处理
+            drop(permit);
             let body = response.text().await.unwrap_or_default();
 
             // 402 额度用尽
@@ -393,20 +405,17 @@ impl KiroProvider {
                 continue;
             }
 
-            // 429 Too Many Requests - 限流：递增 success_count 让 Least-Used 算法轮转到下一个凭据
+            // 429 Too Many Requests — 触发冷却，直接 continue 选择其他凭据
             if status.as_u16() == 429 {
                 tracing::warn!(
-                    "MCP 请求失败（上游限流，切换凭据重试，尝试 {}/{}）: {} {}",
+                    "MCP 请求失败（上游限流，冷却凭据并切换，尝试 {}/{}）: {} {}",
                     attempt + 1,
                     max_retries,
                     status,
                     body
                 );
-                self.token_manager.report_success(ctx.id);
+                self.token_manager.report_rate_limited(ctx.id);
                 last_error = Some(anyhow::anyhow!("MCP 请求失败: {} {}", status, body));
-                if attempt + 1 < max_retries {
-                    sleep(Self::retry_delay(attempt)).await;
-                }
                 continue;
             }
 
@@ -454,7 +463,6 @@ impl KiroProvider {
         request_body: &str,
         is_stream: bool,
     ) -> anyhow::Result<reqwest::Response> {
-        let _permit = self.concurrency_limit.acquire().await?;
         let total_credentials = self.token_manager.total_count();
         let max_retries = (total_credentials * MAX_RETRIES_PER_CREDENTIAL).min(MAX_TOTAL_RETRIES);
         let mut last_error: Option<anyhow::Error> = None;
@@ -482,6 +490,9 @@ impl KiroProvider {
                 }
             };
 
+            // 获取信号量 permit，仅包裹 HTTP 发送阶段
+            let permit = self.concurrency_limit.acquire().await?;
+
             // 发送请求
             let response = match self
                 .client_for(&ctx.credentials)?
@@ -493,14 +504,14 @@ impl KiroProvider {
             {
                 Ok(resp) => resp,
                 Err(e) => {
+                    // 释放 permit 后再 sleep
+                    drop(permit);
                     tracing::warn!(
                         "API 请求发送失败（尝试 {}/{}）: {}",
                         attempt + 1,
                         max_retries,
                         e
                     );
-                    // 网络错误通常是上游/链路瞬态问题，不应导致"禁用凭据"或"切换凭据"
-                    // （否则一段时间网络抖动会把所有凭据都误禁用，需要重启才能恢复）
                     last_error = Some(e.into());
                     if attempt + 1 < max_retries {
                         sleep(Self::retry_delay(attempt)).await;
@@ -511,7 +522,7 @@ impl KiroProvider {
 
             let status = response.status();
 
-            // 成功响应
+            // 成功响应 — permit 随函数返回自然 drop
             if status.is_success() {
                 self.token_manager.report_success(ctx.id);
                 if let Some(rpm) = &self.rpm_tracker {
@@ -520,7 +531,8 @@ impl KiroProvider {
                 return Ok(response);
             }
 
-            // 失败响应：读取 body 用于日志/错误信息
+            // 失败响应：释放 permit 后再处理
+            drop(permit);
             let body = response.text().await.unwrap_or_default();
 
             // 402 Payment Required 且额度用尽：禁用凭据并故障转移
@@ -586,31 +598,26 @@ impl KiroProvider {
                 continue;
             }
 
-            // 429 Too Many Requests - 限流：递增 success_count 让 Least-Used 算法轮转到下一个凭据
+            // 429 Too Many Requests — 触发冷却，直接 continue 选择其他凭据
             if status.as_u16() == 429 {
                 tracing::warn!(
-                    "API 请求失败（上游限流，切换凭据重试，尝试 {}/{}）: {} {}",
+                    "API 请求失败（上游限流，冷却凭据并切换，尝试 {}/{}）: {} {}",
                     attempt + 1,
                     max_retries,
                     status,
                     body
                 );
-                // 递增 success_count，使 balanced 模式下一次 acquire_context 选择其他凭据
-                self.token_manager.report_success(ctx.id);
+                self.token_manager.report_rate_limited(ctx.id);
                 last_error = Some(anyhow::anyhow!(
                     "{} API 请求失败: {} {}",
                     api_type,
                     status,
                     body
                 ));
-                if attempt + 1 < max_retries {
-                    sleep(Self::retry_delay(attempt)).await;
-                }
                 continue;
             }
 
             // 408/5xx - 瞬态上游错误：重试但不禁用或切换凭据
-            // （避免 502 high load 等瞬态错误把所有凭据锁死）
             if status.as_u16() == 408 || status.is_server_error() {
                 tracing::warn!(
                     "API 请求失败（上游瞬态错误，尝试 {}/{}）: {} {}",

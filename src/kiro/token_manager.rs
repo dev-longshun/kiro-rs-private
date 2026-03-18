@@ -13,6 +13,7 @@ use tokio::sync::Mutex as TokioMutex;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 
 use crate::http_client::{ProxyConfig, build_client};
@@ -180,7 +181,7 @@ async fn refresh_social_token(
         .ok_or_else(|| anyhow::anyhow!("无法生成 machineId"))?;
     let kiro_version = &config.kiro_version;
 
-    let client = build_client(proxy, 60, config.tls_backend)?;
+    let client = build_client(proxy, 60, config.tls_backend, 20)?;
     let body = RefreshRequest {
         refresh_token: refresh_token.to_string(),
     };
@@ -295,7 +296,7 @@ async fn refresh_idc_token(
     };
     let refresh_url = format!("https://oidc.{}.amazonaws.com/token", region);
 
-    let client = build_client(proxy, 60, config.tls_backend)?;
+    let client = build_client(proxy, 60, config.tls_backend, 20)?;
     let body = IdcRefreshRequest {
         client_id: client_id.to_string(),
         client_secret: client_secret.to_string(),
@@ -389,7 +390,7 @@ pub(crate) async fn get_usage_limits(
         USAGE_LIMITS_AMZ_USER_AGENT_PREFIX, kiro_version, machine_id
     );
 
-    let client = build_client(proxy, 60, config.tls_backend)?;
+    let client = build_client(proxy, 60, config.tls_backend, 20)?;
 
     let response = client
         .get(&url)
@@ -440,6 +441,8 @@ struct CredentialEntry {
     success_count: u64,
     /// 最后一次 API 调用时间（RFC3339 格式）
     last_used_at: Option<String>,
+    /// 429 冷却截止时间（冷却期间不会被选中）
+    cooldown_until: Option<Instant>,
 }
 
 /// 禁用原因
@@ -495,6 +498,9 @@ pub struct CredentialEntrySnapshot {
     /// 代理 URL（用于前端展示）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
+    /// 429 冷却剩余秒数（None 表示未冷却）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cooldown_remaining_secs: Option<u64>,
 }
 
 /// 凭据管理器状态快照
@@ -522,8 +528,8 @@ pub struct MultiTokenManager {
     entries: Mutex<Vec<CredentialEntry>>,
     /// 当前活动凭据 ID
     current_id: Mutex<u64>,
-    /// Token 刷新锁，确保同一时间只有一个刷新操作
-    refresh_lock: TokioMutex<()>,
+    /// Per-credential Token 刷新锁，避免多凭据同时过期时串行刷新
+    refresh_locks: Mutex<HashMap<u64, Arc<TokioMutex<()>>>>,
     /// 凭据文件路径（用于回写）
     credentials_path: Option<PathBuf>,
     /// 是否为多凭据格式（数组格式才回写）
@@ -611,6 +617,7 @@ impl MultiTokenManager {
                     },
                     success_count: 0,
                     last_used_at: None,
+                    cooldown_until: None,
                 }
             })
             .collect();
@@ -634,13 +641,19 @@ impl MultiTokenManager {
             .map(|e| e.id)
             .unwrap_or(0);
 
+        // 为每个凭据创建独立的刷新锁
+        let refresh_locks: HashMap<u64, Arc<TokioMutex<()>>> = entries
+            .iter()
+            .map(|e| (e.id, Arc::new(TokioMutex::new(()))))
+            .collect();
+
         let load_balancing_mode = config.load_balancing_mode.clone();
         let manager = Self {
             config,
             proxy,
             entries: Mutex::new(entries),
             current_id: Mutex::new(initial_id),
-            refresh_lock: TokioMutex::new(()),
+            refresh_locks: Mutex::new(refresh_locks),
             credentials_path,
             is_multiple_format: AtomicBool::new(is_multiple_format),
             load_balancing_mode: Mutex::new(load_balancing_mode),
@@ -699,20 +712,20 @@ impl MultiTokenManager {
     /// - `model`: 可选的模型名称，用于过滤支持该模型的凭据（如 opus 模型需要付费订阅）
     fn select_next_credential(&self, model: Option<&str>) -> Option<(u64, KiroCredentials)> {
         let entries = self.entries.lock();
+        let now = Instant::now();
 
         // 检查是否是 opus 模型
         let is_opus = model
             .map(|m| m.to_lowercase().contains("opus"))
             .unwrap_or(false);
 
-        // 过滤可用凭据
-        let available: Vec<_> = entries
+        // 基础过滤：未禁用 + 模型兼容
+        let base_available: Vec<_> = entries
             .iter()
             .filter(|e| {
                 if e.disabled {
                     return false;
                 }
-                // 如果是 opus 模型，需要检查订阅等级
                 if is_opus && !e.credentials.supports_opus() {
                     return false;
                 }
@@ -720,9 +733,29 @@ impl MultiTokenManager {
             })
             .collect();
 
-        if available.is_empty() {
+        if base_available.is_empty() {
             return None;
         }
+
+        // 进一步过滤：排除冷却中的凭据
+        let not_cooled: Vec<_> = base_available
+            .iter()
+            .filter(|e| {
+                e.cooldown_until
+                    .map(|until| now >= until)
+                    .unwrap_or(true)
+            })
+            .collect();
+
+        // 如果所有凭据都在冷却中，fallback 选择冷却最早结束的
+        let available = if not_cooled.is_empty() {
+            let earliest = base_available
+                .iter()
+                .min_by_key(|e| e.cooldown_until.unwrap_or(now))?;
+            vec![earliest]
+        } else {
+            not_cooled
+        };
 
         let mode = self.load_balancing_mode.lock().clone();
         let mode = mode.as_str();
@@ -903,8 +936,15 @@ impl MultiTokenManager {
         let needs_refresh = is_token_expired(credentials) || is_token_expiring_soon(credentials);
 
         let creds = if needs_refresh {
-            // 获取刷新锁，确保同一时间只有一个刷新操作
-            let _guard = self.refresh_lock.lock().await;
+            // 获取该凭据的独立刷新锁
+            let lock = {
+                let mut locks = self.refresh_locks.lock();
+                locks
+                    .entry(id)
+                    .or_insert_with(|| Arc::new(TokioMutex::new(())))
+                    .clone()
+            };
+            let _guard = lock.lock().await;
 
             // 第二次检查：获取锁后重新读取凭据，因为其他请求可能已经完成刷新
             let current_creds = {
@@ -1259,6 +1299,23 @@ impl MultiTokenManager {
         result
     }
 
+    /// 报告指定凭据遭遇 429 限流
+    ///
+    /// 设置冷却时间，冷却期间该凭据不会被 select_next_credential 选中
+    pub fn report_rate_limited(&self, id: u64) {
+        let cooldown_secs = self.config.cooldown_secs;
+        let mut entries = self.entries.lock();
+        if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+            entry.cooldown_until = Some(Instant::now() + StdDuration::from_secs(cooldown_secs));
+            entry.last_used_at = Some(Utc::now().to_rfc3339());
+            tracing::warn!(
+                "凭据 #{} 遭遇 429 限流，冷却 {} 秒",
+                id,
+                cooldown_secs
+            );
+        }
+    }
+
     /// 切换到优先级最高的可用凭据
     ///
     /// 返回是否成功切换
@@ -1307,30 +1364,43 @@ impl MultiTokenManager {
         let entries = self.entries.lock();
         let current_id = *self.current_id.lock();
         let available = entries.iter().filter(|e| !e.disabled).count();
+        let now = Instant::now();
 
         ManagerSnapshot {
             entries: entries
                 .iter()
-                .map(|e| CredentialEntrySnapshot {
-                    id: e.id,
-                    priority: e.credentials.priority,
-                    disabled: e.disabled,
-                    failure_count: e.failure_count,
-                    auth_method: e.credentials.auth_method.as_deref().map(|m| {
-                        if m.eq_ignore_ascii_case("builder-id") || m.eq_ignore_ascii_case("iam") {
-                            "idc".to_string()
+                .map(|e| {
+                    let cooldown_remaining_secs = e.cooldown_until.and_then(|until| {
+                        if now < until {
+                            Some(until.duration_since(now).as_secs())
                         } else {
-                            m.to_string()
+                            None
                         }
-                    }),
-                    has_profile_arn: e.credentials.profile_arn.is_some(),
-                    expires_at: e.credentials.expires_at.clone(),
-                    refresh_token_hash: e.credentials.refresh_token.as_deref().map(sha256_hex),
-                    email: e.credentials.email.clone(),
-                    success_count: e.success_count,
-                    last_used_at: e.last_used_at.clone(),
-                    has_proxy: e.credentials.proxy_url.is_some(),
-                    proxy_url: e.credentials.proxy_url.clone(),
+                    });
+                    CredentialEntrySnapshot {
+                        id: e.id,
+                        priority: e.credentials.priority,
+                        disabled: e.disabled,
+                        failure_count: e.failure_count,
+                        auth_method: e.credentials.auth_method.as_deref().map(|m| {
+                            if m.eq_ignore_ascii_case("builder-id")
+                                || m.eq_ignore_ascii_case("iam")
+                            {
+                                "idc".to_string()
+                            } else {
+                                m.to_string()
+                            }
+                        }),
+                        has_profile_arn: e.credentials.profile_arn.is_some(),
+                        expires_at: e.credentials.expires_at.clone(),
+                        refresh_token_hash: e.credentials.refresh_token.as_deref().map(sha256_hex),
+                        email: e.credentials.email.clone(),
+                        success_count: e.success_count,
+                        last_used_at: e.last_used_at.clone(),
+                        has_proxy: e.credentials.proxy_url.is_some(),
+                        proxy_url: e.credentials.proxy_url.clone(),
+                        cooldown_remaining_secs,
+                    }
                 })
                 .collect(),
             current_id,
@@ -1413,7 +1483,14 @@ impl MultiTokenManager {
         let needs_refresh = is_token_expired(&credentials) || is_token_expiring_soon(&credentials);
 
         let token = if needs_refresh {
-            let _guard = self.refresh_lock.lock().await;
+            let lock = {
+                let mut locks = self.refresh_locks.lock();
+                locks
+                    .entry(id)
+                    .or_insert_with(|| Arc::new(TokioMutex::new(())))
+                    .clone()
+            };
+            let _guard = lock.lock().await;
             let current_creds = {
                 let entries = self.entries.lock();
                 entries
@@ -1578,7 +1655,14 @@ impl MultiTokenManager {
                 disabled_reason: None,
                 success_count: 0,
                 last_used_at: None,
+                cooldown_until: None,
             });
+        }
+
+        // 为新凭据创建刷新锁
+        {
+            let mut locks = self.refresh_locks.lock();
+            locks.insert(new_id, Arc::new(TokioMutex::new(())));
         }
 
         // 6. 自动升级为多凭据格式（添加凭据后必须能持久化）

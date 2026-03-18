@@ -146,7 +146,7 @@ async fn call_remote_count_tokens(
     messages: &Vec<Message>,
     tools: &Option<Vec<Tool>>,
 ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-    let client = build_client(config.proxy.as_ref(), 300, config.tls_backend)?;
+    let client = build_client(config.proxy.as_ref(), 300, config.tls_backend, 100)?;
 
     // 构建请求体
     let request = CountTokensRequest {

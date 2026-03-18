@@ -48,12 +48,15 @@ pub fn build_client(
     proxy: Option<&ProxyConfig>,
     timeout_secs: u64,
     tls_backend: TlsBackend,
+    pool_max_idle_per_host: usize,
 ) -> anyhow::Result<Client> {
     let mut builder = Client::builder()
         .timeout(Duration::from_secs(timeout_secs))
-        .pool_max_idle_per_host(20)
+        .pool_max_idle_per_host(pool_max_idle_per_host)
         .pool_idle_timeout(Duration::from_secs(90))
-        .tcp_keepalive(Duration::from_secs(30));
+        .tcp_keepalive(Duration::from_secs(30))
+        .http2_keep_alive_interval(Duration::from_secs(15))
+        .http2_keep_alive_timeout(Duration::from_secs(10));
 
     if tls_backend == TlsBackend::Rustls {
         builder = builder.use_rustls_tls();
@@ -96,14 +99,14 @@ mod tests {
 
     #[test]
     fn test_build_client_without_proxy() {
-        let client = build_client(None, 30, TlsBackend::Rustls);
+        let client = build_client(None, 30, TlsBackend::Rustls, 100);
         assert!(client.is_ok());
     }
 
     #[test]
     fn test_build_client_with_proxy() {
         let config = ProxyConfig::new("http://127.0.0.1:7890");
-        let client = build_client(Some(&config), 30, TlsBackend::Rustls);
+        let client = build_client(Some(&config), 30, TlsBackend::Rustls, 100);
         assert!(client.is_ok());
     }
 }

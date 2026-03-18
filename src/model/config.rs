@@ -91,6 +91,18 @@ pub struct Config {
     #[serde(default = "default_load_balancing_mode")]
     pub load_balancing_mode: String,
 
+    /// 最大并发请求数（同时发往上游的请求上限）
+    #[serde(default = "default_max_concurrent_requests")]
+    pub max_concurrent_requests: usize,
+
+    /// 凭据 429 冷却时长（秒）
+    #[serde(default = "default_cooldown_secs")]
+    pub cooldown_secs: u64,
+
+    /// 连接池每个 host 最大空闲连接数
+    #[serde(default = "default_pool_max_idle_per_host")]
+    pub pool_max_idle_per_host: usize,
+
     /// 配置文件路径（运行时元数据，不写入 JSON）
     #[serde(skip)]
     config_path: Option<PathBuf>,
@@ -133,6 +145,18 @@ fn default_load_balancing_mode() -> String {
     "priority".to_string()
 }
 
+fn default_max_concurrent_requests() -> usize {
+    200
+}
+
+fn default_cooldown_secs() -> u64 {
+    60
+}
+
+fn default_pool_max_idle_per_host() -> usize {
+    100
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -155,6 +179,9 @@ impl Default for Config {
             proxy_password: None,
             admin_api_key: None,
             load_balancing_mode: default_load_balancing_mode(),
+            max_concurrent_requests: default_max_concurrent_requests(),
+            cooldown_secs: default_cooldown_secs(),
+            pool_max_idle_per_host: default_pool_max_idle_per_host(),
             config_path: None,
         }
     }
@@ -260,6 +287,21 @@ impl Config {
         }
         if let Ok(v) = env::var("LOAD_BALANCING_MODE") {
             self.load_balancing_mode = v;
+        }
+        if let Ok(v) = env::var("MAX_CONCURRENT_REQUESTS") {
+            if let Ok(n) = v.parse::<usize>() {
+                self.max_concurrent_requests = n;
+            }
+        }
+        if let Ok(v) = env::var("COOLDOWN_SECS") {
+            if let Ok(n) = v.parse::<u64>() {
+                self.cooldown_secs = n;
+            }
+        }
+        if let Ok(v) = env::var("POOL_MAX_IDLE_PER_HOST") {
+            if let Ok(n) = v.parse::<usize>() {
+                self.pool_max_idle_per_host = n;
+            }
         }
     }
 }

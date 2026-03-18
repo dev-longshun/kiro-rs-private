@@ -20,8 +20,16 @@ use model::arg::Args;
 use model::config::Config;
 use model::usage::UsageTracker;
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(8)
+        .enable_all()
+        .build()
+        .expect("Failed to create Tokio runtime");
+    runtime.block_on(async_main());
+}
+
+async fn async_main() {
     // 解析命令行参数
     let args = Args::parse();
 
