@@ -466,17 +466,14 @@ export function Dashboard({ onLogout }: DashboardProps) {
     })
   }
 
-  // 循环切换缓存模拟比例
+  // 缓存模拟比例下拉菜单
+  const [cacheDropdownOpen, setCacheDropdownOpen] = useState(false)
   const cacheRatioSteps = [0, 0.3, 0.5, 0.7, 1.0]
-  const handleCycleCacheRatio = () => {
-    const current = cacheRatioData?.ratio ?? 0.5
-    const currentIndex = cacheRatioSteps.findIndex(s => Math.abs(s - current) < 0.01)
-    const nextIndex = (currentIndex + 1) % cacheRatioSteps.length
-    const nextRatio = cacheRatioSteps[nextIndex]
-
-    setCacheSimulationRatio(nextRatio, {
+  const handleSetCacheRatio = (ratio: number) => {
+    setCacheDropdownOpen(false)
+    setCacheSimulationRatio(ratio, {
       onSuccess: () => {
-        toast.success(`缓存模拟比例已设置为 ${Math.round(nextRatio * 100)}%`)
+        toast.success(`缓存模拟比例已设置为 ${Math.round(ratio * 100)}%`)
       },
       onError: (error) => {
         toast.error(`设置失败: ${extractErrorMessage(error)}`)
@@ -563,16 +560,37 @@ export function Dashboard({ onLogout }: DashboardProps) {
             >
               {isLoadingMode ? '加载中...' : (loadBalancingData?.mode === 'priority' ? '优先级模式' : '均衡负载')}
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleCycleCacheRatio}
-              disabled={isLoadingCacheRatio || isSettingCacheRatio}
-              title="切换缓存模拟比例"
-              className="hidden sm:inline-flex"
-            >
-              {isLoadingCacheRatio ? '加载中...' : `缓存 ${Math.round((cacheRatioData?.ratio ?? 0.5) * 100)}%`}
-            </Button>
+            <div className="relative hidden sm:inline-flex">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCacheDropdownOpen(!cacheDropdownOpen)}
+                disabled={isLoadingCacheRatio || isSettingCacheRatio}
+                title="设置缓存模拟比例"
+              >
+                {isLoadingCacheRatio ? '加载中...' : `缓存 ${Math.round((cacheRatioData?.ratio ?? 0.5) * 100)}%`}
+              </Button>
+              {cacheDropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setCacheDropdownOpen(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[120px] rounded-md border bg-popover p-1 shadow-md">
+                    {cacheRatioSteps.map(ratio => {
+                      const pct = Math.round(ratio * 100)
+                      const isCurrent = Math.abs((cacheRatioData?.ratio ?? 0.5) - ratio) < 0.01
+                      return (
+                        <button
+                          key={ratio}
+                          onClick={() => handleSetCacheRatio(ratio)}
+                          className={`w-full text-left rounded-sm px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground ${isCurrent ? 'bg-accent font-medium' : ''}`}
+                        >
+                          {pct}%{ratio === 0.5 ? ' (默认)' : ''}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
             <Button variant="ghost" size="icon" onClick={toggleDarkMode}>
               {darkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </Button>
