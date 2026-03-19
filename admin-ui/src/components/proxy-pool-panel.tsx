@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Plus, Pencil, Trash2, Activity, PowerOff, Wifi, WifiOff, Clock } from 'lucide-react'
+import { Plus, Pencil, Trash2, Activity, PowerOff, Wifi, WifiOff, Clock, Upload } from 'lucide-react'
 import { toast } from 'sonner'
+import { useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -23,15 +24,20 @@ import {
   useCheckProxy,
 } from '@/hooks/use-credentials'
 import { extractErrorMessage } from '@/lib/utils'
+import { addProxy as addProxyApi } from '@/api/credentials'
 import type { ProxyPoolEntry, AddProxyRequest, UpdateProxyRequest } from '@/types/api'
 
 export function ProxyPoolPanel() {
   const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false)
+  const [batchText, setBatchText] = useState('')
+  const [batchImporting, setBatchImporting] = useState(false)
   const [editEntry, setEditEntry] = useState<ProxyPoolEntry | null>(null)
   const [addForm, setAddForm] = useState<AddProxyRequest>({ name: '', url: '' })
   const [editForm, setEditForm] = useState<UpdateProxyRequest>({})
 
   const { data: proxies, isLoading } = useProxyPool()
+  const queryClient = useQueryClient()
   const { mutate: addProxyMut, isPending: isAdding } = useAddProxy()
   const { mutate: updateProxyMut, isPending: isUpdating } = useUpdateProxy()
   const { mutate: deleteProxyMut } = useDeleteProxy()
@@ -56,6 +62,49 @@ export function ProxyPoolPanel() {
       },
       onError: (err) => toast.error(`添加失败: ${extractErrorMessage(err)}`),
     })
+  }
+
+  const handleBatchImport = async () => {
+    const lines = batchText.split('\n').map(l => l.trim()).filter(Boolean)
+    if (lines.length === 0) {
+      toast.error('请粘贴至少一行代理信息')
+      return
+    }
+
+    setBatchImporting(true)
+    const startIndex = (proxies?.length ?? 0) + 1
+    let successCount = 0
+    let failCount = 0
+
+    for (let i = 0; i < lines.length; i++) {
+      const parsed = parseProxyString(lines[i])
+      if (!parsed) {
+        failCount++
+        continue
+      }
+      try {
+        await addProxyApi({
+          name: `Proxy-${startIndex + i}`,
+          url: parsed.url,
+          username: parsed.username,
+          password: parsed.password,
+        })
+        successCount++
+      } catch {
+        failCount++
+      }
+    }
+
+    setBatchImporting(false)
+    queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+
+    if (failCount === 0) {
+      toast.success(`成功导入 ${successCount} 个代理`)
+      setBatchDialogOpen(false)
+      setBatchText('')
+    } else {
+      toast.warning(`导入完成：成功 ${successCount} 个，失败 ${failCount} 个`)
+    }
   }
 
   const handleEdit = () => {
@@ -239,10 +288,16 @@ export function ProxyPoolPanel() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-semibold">代理池管理</h2>
-          <Button onClick={() => setAddDialogOpen(true)} size="sm">
-            <Plus className="h-4 w-4 sm:mr-2" />
-            <span className="hidden sm:inline">添加代理</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setBatchDialogOpen(true)} size="sm" variant="outline">
+              <Upload className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">批量导入</span>
+            </Button>
+            <Button onClick={() => setAddDialogOpen(true)} size="sm">
+              <Plus className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">添加代理</span>
+            </Button>
+          </div>
         </div>
 
         {totalCount === 0 ? (
@@ -449,6 +504,31 @@ export function ProxyPoolPanel() {
             <Button variant="outline" onClick={() => setEditEntry(null)}>取消</Button>
             <Button onClick={handleEdit} disabled={isUpdating}>
               {isUpdating ? '保存中...' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 批量导入对话框 */}
+      <Dialog open={batchDialogOpen} onOpenChange={setBatchDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>批量导入代理</DialogTitle>
+            <DialogDescription>每行一个，支持 user:pass@host:port 或 host:port:user:pass 格式</DialogDescription>
+          </DialogHeader>
+          <textarea
+            className="w-full h-48 rounded-md border bg-background px-3 py-2 text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+            placeholder={"user:pass@1.2.3.4:1080\nuser:pass@5.6.7.8:1080\nhost:port:user:pass"}
+            value={batchText}
+            onChange={(e) => setBatchText(e.target.value)}
+          />
+          <div className="text-xs text-muted-foreground">
+            共 {batchText.split('\n').filter(l => l.trim()).length} 行，名称自动生成为 Proxy-N
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBatchDialogOpen(false)}>取消</Button>
+            <Button onClick={handleBatchImport} disabled={batchImporting}>
+              {batchImporting ? '导入中...' : '导入'}
             </Button>
           </DialogFooter>
         </DialogContent>
