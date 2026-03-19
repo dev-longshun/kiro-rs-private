@@ -90,7 +90,7 @@ impl ProxyPoolManager {
         self.entries.read().len()
     }
 
-    /// 新增代理
+    /// 新增代理（URL 重复时返回错误）
     pub fn add(&self, name: String, url: String, username: Option<String>, password: Option<String>) -> anyhow::Result<ProxyPoolEntry> {
         let entry = ProxyPoolEntry {
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
@@ -106,6 +106,9 @@ impl ProxyPoolManager {
         };
         {
             let mut entries = self.entries.write();
+            if entries.iter().any(|e| e.url == entry.url) {
+                anyhow::bail!("代理 URL 已存在: {}", entry.url);
+            }
             entries.push(entry.clone());
         }
         self.save()?;

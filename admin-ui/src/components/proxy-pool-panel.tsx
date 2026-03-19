@@ -74,6 +74,7 @@ export function ProxyPoolPanel() {
     setBatchImporting(true)
     const startIndex = (proxies?.length ?? 0) + 1
     let successCount = 0
+    let skipCount = 0
     let failCount = 0
 
     for (let i = 0; i < lines.length; i++) {
@@ -90,20 +91,29 @@ export function ProxyPoolPanel() {
           password: parsed.password,
         })
         successCount++
-      } catch {
-        failCount++
+      } catch (err) {
+        const msg = extractErrorMessage(err)
+        if (msg.includes('已存在')) {
+          skipCount++
+        } else {
+          failCount++
+        }
       }
     }
 
     setBatchImporting(false)
     queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
 
-    if (failCount === 0) {
+    const parts = [`成功 ${successCount} 个`]
+    if (skipCount > 0) parts.push(`跳过 ${skipCount} 个重复`)
+    if (failCount > 0) parts.push(`失败 ${failCount} 个`)
+
+    if (failCount === 0 && skipCount === 0) {
       toast.success(`成功导入 ${successCount} 个代理`)
       setBatchDialogOpen(false)
       setBatchText('')
     } else {
-      toast.warning(`导入完成：成功 ${successCount} 个，失败 ${failCount} 个`)
+      toast.warning(`导入完成：${parts.join('，')}`)
     }
   }
 
