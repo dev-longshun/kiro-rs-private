@@ -112,6 +112,71 @@ export function ProxyPoolPanel() {
     })
   }
 
+  // 智能解析代理字符串，支持多种格式：
+  // user:pass@host:port / http://user:pass@host:port / host:port:user:pass
+  const parseProxyString = (raw: string): { url: string; username?: string; password?: string } | null => {
+    const s = raw.trim()
+    if (!s) return null
+
+    // 带协议前缀: http://user:pass@host:port 或 socks5://user:pass@host:port
+    const protoMatch = s.match(/^(https?|socks5):\/\/(?:([^:]+):([^@]+)@)?(.+)$/)
+    if (protoMatch) {
+      const [, proto, user, pass, hostPort] = protoMatch
+      return {
+        url: `${proto}://${hostPort}`,
+        username: user || undefined,
+        password: pass || undefined,
+      }
+    }
+
+    // host:port:user:pass 格式（4 段冒号分隔，端口是纯数字）
+    const parts = s.split(':')
+    if (parts.length === 4 && /^\d+$/.test(parts[1])) {
+      return {
+        url: `http://${parts[0]}:${parts[1]}`,
+        username: parts[2],
+        password: parts[3],
+      }
+    }
+
+    // user:pass@host:port（无协议前缀）
+    const atMatch = s.match(/^([^:]+):([^@]+)@(.+)$/)
+    if (atMatch) {
+      const [, user, pass, hostPort] = atMatch
+      return {
+        url: `http://${hostPort}`,
+        username: user,
+        password: pass,
+      }
+    }
+
+    // host:port（纯地址，无认证）
+    if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+      return { url: `http://${s}` }
+    }
+
+    return null
+  }
+
+  const handleProxyUrlInput = (value: string, target: 'add' | 'edit') => {
+    // 如果看起来像需要解析的格式（包含 @ 或 4 段冒号），尝试解析
+    const parsed = parseProxyString(value)
+    if (parsed && (value.includes('@') || value.split(':').length === 4)) {
+      if (target === 'add') {
+        setAddForm({ ...addForm, url: parsed.url, username: parsed.username, password: parsed.password })
+      } else {
+        setEditForm({ ...editForm, url: parsed.url, username: parsed.username, password: parsed.password })
+      }
+      toast.success('已自动识别代理地址和认证信息')
+    } else {
+      if (target === 'add') {
+        setAddForm({ ...addForm, url: value })
+      } else {
+        setEditForm({ ...editForm, url: value })
+      }
+    }
+  }
+
   const maskUrl = (url: string) => {
     try {
       const u = new URL(url)
@@ -304,9 +369,9 @@ export function ProxyPoolPanel() {
             <div className="space-y-2">
               <label className="text-sm font-medium">代理 URL</label>
               <Input
-                placeholder="socks5://1.2.3.4:1080"
+                placeholder="支持粘贴 user:pass@host:port 自动识别"
                 value={addForm.url}
-                onChange={(e) => setAddForm({ ...addForm, url: e.target.value })}
+                onChange={(e) => handleProxyUrlInput(e.target.value, 'add')}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -357,7 +422,7 @@ export function ProxyPoolPanel() {
               <label className="text-sm font-medium">代理 URL</label>
               <Input
                 value={editForm.url ?? ''}
-                onChange={(e) => setEditForm({ ...editForm, url: e.target.value })}
+                onChange={(e) => handleProxyUrlInput(e.target.value, 'edit')}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
