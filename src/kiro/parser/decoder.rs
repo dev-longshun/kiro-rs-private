@@ -34,8 +34,8 @@ use super::error::{ParseError, ParseResult};
 use super::frame::{Frame, PRELUDE_SIZE, parse_frame};
 use bytes::{Buf, BytesMut};
 
-/// 默认最大缓冲区大小 (16 MB)
-pub const DEFAULT_MAX_BUFFER_SIZE: usize = 16 * 1024 * 1024;
+/// 默认最大缓冲区大小 (2 MB)
+pub const DEFAULT_MAX_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
 /// 默认最大连续错误数
 pub const DEFAULT_MAX_ERRORS: usize = 5;

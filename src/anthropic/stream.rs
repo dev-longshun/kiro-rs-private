@@ -511,9 +511,9 @@ impl StreamContext {
             input_tokens,
             context_input_tokens: None,
             output_tokens: 0,
-            tool_block_indices: HashMap::new(),
+            tool_block_indices: HashMap::with_capacity(4),
             thinking_enabled,
-            thinking_buffer: String::new(),
+            thinking_buffer: if thinking_enabled { String::with_capacity(4096) } else { String::new() },
             in_thinking_block: false,
             thinking_extracted: false,
             thinking_block_index: None,
@@ -680,16 +680,17 @@ impl StreamContext {
                     // 发送 <thinking> 之前的内容作为 text_delta
                     // 注意：如果前面只是空白字符（如 adaptive 模式返回的 \n\n），则跳过，
                     // 避免在 thinking 块之前产生无意义的 text 块导致客户端解析失败
-                    let before_thinking = self.thinking_buffer[..start_pos].to_string();
-                    if !before_thinking.is_empty() && !before_thinking.trim().is_empty() {
-                        events.extend(self.create_text_delta_events(&before_thinking));
+                    if start_pos > 0 {
+                        let before_thinking: String = self.thinking_buffer.drain(..start_pos).collect();
+                        if !before_thinking.trim().is_empty() {
+                            events.extend(self.create_text_delta_events(&before_thinking));
+                        }
                     }
 
-                    // 进入 thinking 块
+                    // 进入 thinking 块（drain 掉 <thinking> 标签本身）
                     self.in_thinking_block = true;
                     self.strip_thinking_leading_newline = true;
-                    self.thinking_buffer =
-                        self.thinking_buffer[start_pos + "<thinking>".len()..].to_string();
+                    self.thinking_buffer.drain(.."<thinking>".len());
 
                     // 创建 thinking 块的 content_block_start 事件
                     let thinking_index = self.state_manager.next_block_index();
@@ -716,7 +717,7 @@ impl StreamContext {
                         .saturating_sub("<thinking>".len());
                     let safe_len = find_char_boundary(&self.thinking_buffer, target_len);
                     if safe_len > 0 {
-                        let safe_content = self.thinking_buffer[..safe_len].to_string();
+                        let safe_content: String = self.thinking_buffer.drain(..safe_len).collect();
                         // 如果 thinking 尚未提取，且安全内容只是空白字符，
                         // 则不发送为 text_delta，继续保留在缓冲区等待更多内容。
                         // 这避免了 4.6 模型中 <thinking> 标签跨事件分割时，
@@ -724,7 +725,6 @@ impl StreamContext {
                         // 导致 text 块先于 thinking 块出现的问题。
                         if !safe_content.is_empty() && !safe_content.trim().is_empty() {
                             events.extend(self.create_text_delta_events(&safe_content));
-                            self.thinking_buffer = self.thinking_buffer[safe_len..].to_string();
                         }
                     }
                     break;
@@ -733,7 +733,7 @@ impl StreamContext {
                 // 剥离 <thinking> 标签后紧跟的换行符（可能跨 chunk）
                 if self.strip_thinking_leading_newline {
                     if self.thinking_buffer.starts_with('\n') {
-                        self.thinking_buffer = self.thinking_buffer[1..].to_string();
+                        self.thinking_buffer.drain(..1);
                         self.strip_thinking_leading_newline = false;
                     } else if !self.thinking_buffer.is_empty() {
                         // buffer 非空但不以 \n 开头，不再需要剥离
@@ -745,7 +745,7 @@ impl StreamContext {
                 // 在 thinking 块内，查找 </thinking> 结束标签（跳过被反引号包裹的）
                 if let Some(end_pos) = find_real_thinking_end_tag(&self.thinking_buffer) {
                     // 提取 thinking 内容
-                    let thinking_content = self.thinking_buffer[..end_pos].to_string();
+                    let thinking_content: String = self.thinking_buffer.drain(..end_pos).collect();
                     if !thinking_content.is_empty() {
                         if let Some(thinking_index) = self.thinking_block_index {
                             events.push(
@@ -771,8 +771,8 @@ impl StreamContext {
                     }
 
                     // 剥离 `</thinking>\n\n`（find_real_thinking_end_tag 已确认 \n\n 存在）
-                    self.thinking_buffer =
-                        self.thinking_buffer[end_pos + "</thinking>\n\n".len()..].to_string();
+                    // drain 后 buffer 开头就是 `</thinking>\n\n`
+                    self.thinking_buffer.drain(.."</thinking>\n\n".len());
                 } else {
                     // 没有找到结束标签，发送当前缓冲区内容作为 thinking_delta。
                     // 保留末尾可能是部分 `</thinking>\n\n` 的内容：
@@ -786,7 +786,7 @@ impl StreamContext {
                         .saturating_sub("</thinking>\n\n".len());
                     let safe_len = find_char_boundary(&self.thinking_buffer, target_len);
                     if safe_len > 0 {
-                        let safe_content = self.thinking_buffer[..safe_len].to_string();
+                        let safe_content: String = self.thinking_buffer.drain(..safe_len).collect();
                         if !safe_content.is_empty() {
                             if let Some(thinking_index) = self.thinking_block_index {
                                 events.push(
@@ -794,15 +794,13 @@ impl StreamContext {
                                 );
                             }
                         }
-                        self.thinking_buffer = self.thinking_buffer[safe_len..].to_string();
                     }
                     break;
                 }
             } else {
                 // thinking 已提取完成，剩余内容作为 text_delta
                 if !self.thinking_buffer.is_empty() {
-                    let remaining = self.thinking_buffer.clone();
-                    self.thinking_buffer.clear();
+                    let remaining = std::mem::take(&mut self.thinking_buffer);
                     events.extend(self.create_text_delta_events(&remaining));
                 }
                 break;
@@ -902,7 +900,7 @@ impl StreamContext {
         // 这里在开始 tool_use block 前做一次“边界场景”的结束标签识别与过滤。
         if self.thinking_enabled && self.in_thinking_block {
             if let Some(end_pos) = find_real_thinking_end_tag_at_buffer_end(&self.thinking_buffer) {
-                let thinking_content = self.thinking_buffer[..end_pos].to_string();
+                let thinking_content: String = self.thinking_buffer.drain(..end_pos).collect();
                 if !thinking_content.is_empty() {
                     if let Some(thinking_index) = self.thinking_block_index {
                         events.push(
@@ -927,11 +925,12 @@ impl StreamContext {
                 }
 
                 // 把结束标签后的内容当作普通文本（通常为空或空白）
-                let after_pos = end_pos + "</thinking>".len();
-                let remaining = self.thinking_buffer[after_pos..].trim_start().to_string();
-                self.thinking_buffer.clear();
+                // drain 后 buffer 开头是 `</thinking>...`
+                self.thinking_buffer.drain(.."</thinking>".len());
+                let remaining = std::mem::take(&mut self.thinking_buffer);
+                let remaining = remaining.trim_start();
                 if !remaining.is_empty() {
-                    events.extend(self.create_text_delta_events(&remaining));
+                    events.extend(self.create_text_delta_events(remaining));
                 }
             }
         }
@@ -1015,7 +1014,7 @@ impl StreamContext {
                 if let Some(end_pos) =
                     find_real_thinking_end_tag_at_buffer_end(&self.thinking_buffer)
                 {
-                    let thinking_content = self.thinking_buffer[..end_pos].to_string();
+                    let thinking_content: String = self.thinking_buffer.drain(..end_pos).collect();
                     if !thinking_content.is_empty() {
                         if let Some(thinking_index) = self.thinking_block_index {
                             events.push(
@@ -1035,19 +1034,20 @@ impl StreamContext {
                     }
 
                     // 把结束标签后的内容当作普通文本（通常为空或空白）
-                    let after_pos = end_pos + "</thinking>".len();
-                    let remaining = self.thinking_buffer[after_pos..].trim_start().to_string();
-                    self.thinking_buffer.clear();
+                    self.thinking_buffer.drain(.."</thinking>".len());
+                    let remaining = std::mem::take(&mut self.thinking_buffer);
                     self.in_thinking_block = false;
                     self.thinking_extracted = true;
+                    let remaining = remaining.trim_start();
                     if !remaining.is_empty() {
-                        events.extend(self.create_text_delta_events(&remaining));
+                        events.extend(self.create_text_delta_events(remaining));
                     }
                 } else {
                     // 如果还在 thinking 块内，发送剩余内容作为 thinking_delta
+                    let remaining = std::mem::take(&mut self.thinking_buffer);
                     if let Some(thinking_index) = self.thinking_block_index {
                         events.push(
-                            self.create_thinking_delta_event(thinking_index, &self.thinking_buffer),
+                            self.create_thinking_delta_event(thinking_index, &remaining),
                         );
                     }
                     // 关闭 thinking 块：先发送空的 thinking_delta，再发送 content_block_stop
@@ -1064,10 +1064,9 @@ impl StreamContext {
                 }
             } else {
                 // 否则发送剩余内容作为 text_delta
-                let buffer_content = self.thinking_buffer.clone();
+                let buffer_content = std::mem::take(&mut self.thinking_buffer);
                 events.extend(self.create_text_delta_events(&buffer_content));
             }
-            self.thinking_buffer.clear();
         }
 
         // 如果整个流中只产生了 thinking 块，没有 text 也没有 tool_use，
@@ -1105,29 +1104,28 @@ impl StreamContext {
     }
 }
 
-/// 缓冲流处理上下文 - 用于 /cc/v1/messages 流式请求
+/// 延迟启动流处理上下文 - 用于 /cc/v1/messages 流式请求
 ///
-/// 与 `StreamContext` 不同，此上下文会缓冲所有事件直到流结束，
-/// 然后用从 `contextUsageEvent` 计算的正确 `input_tokens` 更正 `message_start` 事件。
+/// 采用"延迟 message_start"模式：
+/// - Phase A：缓冲事件直到收到 contextUsageEvent，修正 input_tokens 后 flush 所有已缓冲事件
+/// - Phase B：实时流式转发，不再缓冲
 ///
-/// 工作流程：
-/// 1. 使用 `StreamContext` 正常处理所有 Kiro 事件
-/// 2. 把生成的 SSE 事件缓存起来（而不是立即发送）
-/// 3. 流结束时，找到 `message_start` 事件并更新其 `input_tokens`
-/// 4. 一次性返回所有事件
+/// 相比旧的 BufferedStreamContext（等待整个流结束才发送），TTFB 从 30-60s 降到 ~1-3s。
 pub struct BufferedStreamContext {
     /// 内部流处理上下文（复用现有的事件处理逻辑）
     inner: StreamContext,
-    /// 缓冲的所有事件（包括 message_start、content_block_start 等）
+    /// Phase A 缓冲区
     event_buffer: Vec<SseEvent>,
     /// 估算的 input_tokens（用于回退）
     estimated_input_tokens: i32,
     /// 是否已经生成了初始事件
     initial_events_generated: bool,
+    /// 是否已切换到流式模式（Phase B）
+    flushed: bool,
 }
 
 impl BufferedStreamContext {
-    /// 创建缓冲流上下文
+    /// 创建延迟启动流上下文
     pub fn new(
         model: impl Into<String>,
         estimated_input_tokens: i32,
@@ -1137,9 +1135,10 @@ impl BufferedStreamContext {
             StreamContext::new_with_thinking(model, estimated_input_tokens, thinking_enabled);
         Self {
             inner,
-            event_buffer: Vec::new(),
+            event_buffer: Vec::with_capacity(64),
             estimated_input_tokens,
             initial_events_generated: false,
+            flushed: false,
         }
     }
 
@@ -1159,29 +1158,61 @@ impl BufferedStreamContext {
         self
     }
 
-    /// 处理 Kiro 事件并缓冲结果
+    /// 处理 Kiro 事件（两阶段工作流）
     ///
-    /// 复用 StreamContext 的事件处理逻辑，但把结果缓存而不是立即发送。
-    pub fn process_and_buffer(&mut self, event: &crate::kiro::model::events::Event) {
+    /// - Phase A（未 flush）：事件处理后缓冲，检查是否收到 contextUsageEvent，
+    ///   收到后修正 message_start 中的 input_tokens 并 flush 全部缓冲事件。
+    /// - Phase B（已 flush）：事件处理后直接返回。
+    pub fn process_event(&mut self, event: &crate::kiro::model::events::Event) -> Vec<SseEvent> {
         // 首次处理事件时，先生成初始事件（message_start 等）
         if !self.initial_events_generated {
             let initial_events = self.inner.generate_initial_events();
+            if self.flushed {
+                // 理论上不会走到这里，但防御性处理
+                return initial_events;
+            }
             self.event_buffer.extend(initial_events);
             self.initial_events_generated = true;
         }
 
-        // 处理事件并缓冲结果
+        // 处理事件
         let events = self.inner.process_kiro_event(event);
+
+        if self.flushed {
+            // Phase B：直接返回
+            return events;
+        }
+
+        // Phase A：缓冲事件
         self.event_buffer.extend(events);
+
+        // 检查是否收到了 contextUsageEvent（inner.context_input_tokens 被设置）
+        if self.inner.context_input_tokens.is_some() {
+            // 修正 message_start 中的 input_tokens
+            let final_input_tokens = self.inner.context_input_tokens.unwrap();
+            for event in &mut self.event_buffer {
+                if event.event == "message_start" {
+                    if let Some(message) = event.data.get_mut("message") {
+                        if let Some(usage) = message.get_mut("usage") {
+                            usage["input_tokens"] = serde_json::json!(final_input_tokens);
+                        }
+                    }
+                }
+            }
+
+            // Flush 所有缓冲事件
+            self.flushed = true;
+            return std::mem::take(&mut self.event_buffer);
+        }
+
+        // 仍在 Phase A，返回空
+        Vec::new()
     }
 
-    /// 完成流处理并返回所有事件
+    /// 强制 flush（流结束时调用）
     ///
-    /// 此方法会：
-    /// 1. 生成最终事件（message_delta, message_stop）
-    /// 2. 用正确的 input_tokens 更正 message_start 事件
-    /// 3. 返回所有缓冲的事件
-    pub fn finish_and_get_all_events(&mut self) -> Vec<SseEvent> {
+    /// 如果 contextUsageEvent 始终没到达，用估算值兜底。
+    pub fn force_flush(&mut self) -> Vec<SseEvent> {
         // 如果从未处理过事件，也要生成初始事件
         if !self.initial_events_generated {
             let initial_events = self.inner.generate_initial_events();
@@ -1191,15 +1222,18 @@ impl BufferedStreamContext {
 
         // 生成最终事件
         let final_events = self.inner.generate_final_events();
-        self.event_buffer.extend(final_events);
 
-        // 获取正确的 input_tokens
+        if self.flushed {
+            // Phase B：直接返回最终事件
+            return final_events;
+        }
+
+        // Phase A 未 flush：用估算值修正 message_start，然后一次性返回全部
         let final_input_tokens = self
             .inner
             .context_input_tokens
             .unwrap_or(self.estimated_input_tokens);
 
-        // 更正 message_start 事件中的 input_tokens
         for event in &mut self.event_buffer {
             if event.event == "message_start" {
                 if let Some(message) = event.data.get_mut("message") {
@@ -1210,6 +1244,8 @@ impl BufferedStreamContext {
             }
         }
 
+        self.event_buffer.extend(final_events);
+        self.flushed = true;
         std::mem::take(&mut self.event_buffer)
     }
 }

@@ -1,3 +1,7 @@
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 mod admin;
 mod admin_ui;
 mod anthropic;
@@ -22,7 +26,7 @@ use model::usage::UsageTracker;
 
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(8)
+        .worker_threads(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4))
         .enable_all()
         .build()
         .expect("Failed to create Tokio runtime");

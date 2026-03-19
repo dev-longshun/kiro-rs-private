@@ -154,7 +154,7 @@ fn default_cooldown_secs() -> u64 {
 }
 
 fn default_pool_max_idle_per_host() -> usize {
-    100
+    10
 }
 
 impl Default for Config {

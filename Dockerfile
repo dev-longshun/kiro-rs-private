@@ -14,7 +14,7 @@ RUN npm run build
 
 FROM rust:1.92-alpine AS builder
 
-RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static
+RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static make gcc
 
 WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
