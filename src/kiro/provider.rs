@@ -17,6 +17,7 @@ use crate::kiro::machine_id;
 use crate::kiro::model::credentials::KiroCredentials;
 use crate::kiro::token_manager::{CallContext, MultiTokenManager};
 use crate::model::config::TlsBackend;
+use crate::model::proxy_pool::ProxyPoolManager;
 use crate::model::rpm::RpmTracker;
 use parking_lot::Mutex;
 use tokio::sync::Semaphore;
@@ -44,6 +45,8 @@ pub struct KiroProvider {
     concurrency_limit: Arc<Semaphore>,
     /// RPM 追踪器（可选，用于记录凭据维度的 RPM）
     rpm_tracker: Option<Arc<RpmTracker>>,
+    /// 代理池（可选，用于 round-robin 分配代理）
+    proxy_pool: Option<Arc<ProxyPoolManager>>,
 }
 
 impl KiroProvider {
@@ -77,6 +80,7 @@ impl KiroProvider {
             tls_backend,
             concurrency_limit: Arc::new(Semaphore::new(max_concurrent)),
             rpm_tracker: None,
+            proxy_pool: None,
         }
     }
 
@@ -86,9 +90,34 @@ impl KiroProvider {
         self
     }
 
+    /// 设置代理池
+    pub fn with_proxy_pool(mut self, pool: Arc<ProxyPoolManager>) -> Self {
+        self.proxy_pool = Some(pool);
+        self
+    }
+
     /// 根据凭据的代理配置获取（或创建并缓存）对应的 reqwest::Client
+    ///
+    /// 代理解析优先级：凭据级代理 > 代理池轮询 > 全局代理 > 直连
     fn client_for(&self, credentials: &KiroCredentials) -> anyhow::Result<Client> {
-        let effective = credentials.effective_proxy(self.global_proxy.as_ref());
+        let effective = match credentials.proxy_url.as_deref() {
+            // 凭据显式设了 "direct" → 无代理
+            Some(url) if url.eq_ignore_ascii_case("direct") => None,
+            // 凭据有自己的代理 → 用凭据的
+            Some(_) => credentials.effective_proxy(None),
+            // 凭据没设代理 → 尝试代理池 → 全局代理 → 直连
+            None => {
+                if let Some(pool) = &self.proxy_pool {
+                    if let Some(proxy) = pool.next_proxy() {
+                        Some(proxy)
+                    } else {
+                        self.global_proxy.clone()
+                    }
+                } else {
+                    self.global_proxy.clone()
+                }
+            }
+        };
         let mut cache = self.client_cache.lock();
         if let Some(client) = cache.get(&effective) {
             return Ok(client.clone());

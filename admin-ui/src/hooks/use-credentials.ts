@@ -18,8 +18,14 @@ import {
   getAllUsage,
   resetKeyUsage,
   getRpm,
+  getProxyPool,
+  addProxy,
+  updateProxy,
+  deleteProxy,
+  setProxyEnabled,
+  checkProxy,
 } from '@/api/credentials'
-import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest } from '@/types/api'
+import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest, AddProxyRequest, UpdateProxyRequest } from '@/types/api'
 
 // 查询凭据列表
 export function useCredentials() {
@@ -210,5 +216,67 @@ export function useRpm() {
     queryKey: ['rpm'],
     queryFn: getRpm,
     refetchInterval: 5000,
+  })
+}
+
+// ============ 代理池 Hooks ============
+
+export function useProxyPool() {
+  return useQuery({
+    queryKey: ['proxyPool'],
+    queryFn: getProxyPool,
+    refetchInterval: 30000,
+  })
+}
+
+export function useAddProxy() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (req: AddProxyRequest) => addProxy(req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+    },
+  })
+}
+
+export function useUpdateProxy() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: UpdateProxyRequest }) =>
+      updateProxy(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+    },
+  })
+}
+
+export function useDeleteProxy() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => deleteProxy(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+    },
+  })
+}
+
+export function useSetProxyEnabled() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
+      setProxyEnabled(id, enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+    },
+  })
+}
+
+export function useCheckProxy() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => checkProxy(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+    },
   })
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, FileUp, Trash2, RotateCcw, CheckCircle2, Key } from 'lucide-react'
+import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, FileUp, Trash2, RotateCcw, CheckCircle2, Key, Globe } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { storage } from '@/lib/storage'
@@ -13,6 +13,7 @@ import { BatchImportDialog } from '@/components/batch-import-dialog'
 import { KamImportDialog } from '@/components/kam-import-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ApiKeysPanel } from '@/components/api-keys-panel'
+import { ProxyPoolPanel } from '@/components/proxy-pool-panel'
 import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useRpm } from '@/hooks/use-credentials'
 import { getCredentialBalance } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
@@ -23,7 +24,7 @@ interface DashboardProps {
 }
 
 export function Dashboard({ onLogout }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<'credentials' | 'apikeys'>('credentials')
+  const [activeTab, setActiveTab] = useState<'credentials' | 'apikeys' | 'proxies'>('credentials')
   const [selectedCredentialId, setSelectedCredentialId] = useState<number | null>(null)
   const [balanceDialogOpen, setBalanceDialogOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -520,6 +521,15 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 <Key className="h-3 w-3 sm:mr-1" />
                 <span className="hidden sm:inline">API Keys</span>
               </Button>
+              <Button
+                variant={activeTab === 'proxies' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setActiveTab('proxies')}
+                className="h-7 px-2 sm:px-3 text-xs"
+              >
+                <Globe className="h-3 w-3 sm:mr-1" />
+                <span className="hidden sm:inline">代理池</span>
+              </Button>
             </div>
           </div>
           <div className="flex items-center gap-1 sm:gap-2">
@@ -550,6 +560,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
       <main className="container mx-auto px-3 sm:px-4 md:px-8 py-4 sm:py-6">
         {activeTab === 'apikeys' ? (
           <ApiKeysPanel />
+        ) : activeTab === 'proxies' ? (
+          <ProxyPoolPanel />
         ) : (
         <>
         {/* 统计卡片 */}

@@ -14,6 +14,7 @@ use super::service::AdminService;
 use super::types::AdminErrorResponse;
 use crate::common::auth;
 use crate::model::api_key::ApiKeyManager;
+use crate::model::proxy_pool::ProxyPoolManager;
 use crate::model::rpm::RpmTracker;
 use crate::model::usage::UsageTracker;
 
@@ -32,6 +33,8 @@ pub struct AdminState {
     pub usage_tracker: Option<Arc<UsageTracker>>,
     /// RPM 追踪器（可选）
     pub rpm_tracker: Option<Arc<RpmTracker>>,
+    /// 代理池管理器（可选）
+    pub proxy_pool: Option<Arc<ProxyPoolManager>>,
 }
 
 impl AdminState {
@@ -43,6 +46,7 @@ impl AdminState {
             api_key_manager: None,
             usage_tracker: None,
             rpm_tracker: None,
+            proxy_pool: None,
         }
     }
 
@@ -63,6 +67,11 @@ impl AdminState {
 
     pub fn with_rpm_tracker(mut self, tracker: Arc<RpmTracker>) -> Self {
         self.rpm_tracker = Some(tracker);
+        self
+    }
+
+    pub fn with_proxy_pool(mut self, pool: Arc<ProxyPoolManager>) -> Self {
+        self.proxy_pool = Some(pool);
         self
     }
 }

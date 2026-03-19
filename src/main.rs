@@ -22,6 +22,7 @@ use kiro::token_manager::MultiTokenManager;
 use model::api_key::ApiKeyManager;
 use model::arg::Args;
 use model::config::Config;
+use model::proxy_pool::ProxyPoolManager;
 use model::usage::UsageTracker;
 
 fn main() {
@@ -114,7 +115,7 @@ async fn async_main() {
     // 创建 RPM 追踪器
     let rpm_tracker = Arc::new(model::rpm::RpmTracker::new());
 
-    let kiro_provider = KiroProvider::with_proxy(token_manager.clone(), proxy_config.clone())
+    let mut kiro_provider = KiroProvider::with_proxy(token_manager.clone(), proxy_config.clone())
         .with_rpm_tracker(rpm_tracker.clone());
 
     // 初始化 count_tokens 配置
@@ -158,6 +159,32 @@ async fn async_main() {
         (None, None)
     };
 
+    // 初始化代理池管理器
+    let proxy_pool_manager: Option<Arc<ProxyPoolManager>> = if admin_key_valid {
+        let data_dir = std::path::Path::new(&config_path)
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+        match ProxyPoolManager::load(data_dir.join("proxy_pool.json"), config.tls_backend) {
+            Ok(manager) => {
+                let manager = Arc::new(manager);
+                manager.start_health_check();
+                tracing::info!("代理池已启用（{} 个代理）", manager.count());
+                Some(manager)
+            }
+            Err(e) => {
+                tracing::warn!("加载代理池失败，跳过: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // 注入代理池到 KiroProvider
+    if let Some(ref pool) = proxy_pool_manager {
+        kiro_provider = kiro_provider.with_proxy_pool(pool.clone());
+    }
+
     let mut anthropic_app_state = anthropic::middleware::AppState::new(&api_key)
         .with_rpm_tracker(rpm_tracker.clone());
     if let Some(ref manager) = api_key_manager {
@@ -188,6 +215,9 @@ async fn async_main() {
             }
             if let Some(ref tracker) = usage_tracker {
                 admin_state = admin_state.with_usage_tracker(tracker.clone());
+            }
+            if let Some(ref pool) = proxy_pool_manager {
+                admin_state = admin_state.with_proxy_pool(pool.clone());
             }
             let admin_app = admin::create_admin_router(admin_state);
 

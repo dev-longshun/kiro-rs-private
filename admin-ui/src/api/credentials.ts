@@ -14,6 +14,9 @@ import type {
   UpdateApiKeyRequest,
   UsageSummary,
   RpmSnapshot,
+  ProxyPoolEntry,
+  AddProxyRequest,
+  UpdateProxyRequest,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -168,5 +171,37 @@ export async function resetKeyUsage(id: number): Promise<SuccessResponse> {
 // 获取实时 RPM 数据
 export async function getRpm(): Promise<RpmSnapshot> {
   const { data } = await api.get<RpmSnapshot>('/rpm')
+  return data
+}
+
+// ============ 代理池管理 ============
+
+export async function getProxyPool(): Promise<ProxyPoolEntry[]> {
+  const { data } = await api.get<ProxyPoolEntry[]>('/proxy-pool')
+  return data
+}
+
+export async function addProxy(req: AddProxyRequest): Promise<ProxyPoolEntry> {
+  const { data } = await api.post<ProxyPoolEntry>('/proxy-pool', req)
+  return data
+}
+
+export async function updateProxy(id: number, req: UpdateProxyRequest): Promise<ProxyPoolEntry> {
+  const { data } = await api.put<ProxyPoolEntry>(`/proxy-pool/${id}`, req)
+  return data
+}
+
+export async function deleteProxy(id: number): Promise<SuccessResponse> {
+  const { data } = await api.delete<SuccessResponse>(`/proxy-pool/${id}`)
+  return data
+}
+
+export async function setProxyEnabled(id: number, enabled: boolean): Promise<SuccessResponse> {
+  const { data } = await api.post<SuccessResponse>(`/proxy-pool/${id}/enabled`, { enabled })
+  return data
+}
+
+export async function checkProxy(id: number): Promise<ProxyPoolEntry> {
+  const { data } = await api.post<ProxyPoolEntry>(`/proxy-pool/${id}/check`)
   return data
 }

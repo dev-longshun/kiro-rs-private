@@ -147,3 +147,32 @@ export interface RpmSnapshot {
   byCredential: Record<string, number>
   byApiKey: Record<string, number>
 }
+
+// ============ 代理池 ============
+
+export interface ProxyPoolEntry {
+  id: number
+  name: string
+  url: string
+  username?: string
+  password?: string
+  enabled: boolean
+  healthy: boolean
+  lastCheckAt: string | null
+  latencyMs: number | null
+  consecutiveFailures: number
+}
+
+export interface AddProxyRequest {
+  name: string
+  url: string
+  username?: string
+  password?: string
+}
+
+export interface UpdateProxyRequest {
+  name?: string
+  url?: string
+  username?: string | null
+  password?: string | null
+}

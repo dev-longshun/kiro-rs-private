@@ -334,3 +334,44 @@ impl AdminErrorResponse {
         Self::new("internal_error", message)
     }
 }
+
+// ============ 代理池管理 ============
+
+/// 添加代理请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddProxyRequest {
+    pub name: String,
+    pub url: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+/// 更新代理请求（所有字段可选）
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProxyRequest {
+    pub name: Option<String>,
+    pub url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub username: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub password: Option<Option<String>>,
+}
+
+/// 启停代理请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetProxyEnabledRequest {
+    pub enabled: bool,
+}
+
+/// 区分 JSON 中"字段缺失"与"字段为 null"（String 版本）
+fn deserialize_optional_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
+}
