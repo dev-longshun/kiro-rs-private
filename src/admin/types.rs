@@ -211,6 +211,22 @@ pub struct SetLoadBalancingModeRequest {
     pub mode: String,
 }
 
+// ============ 缓存模拟配置 ============
+
+/// 缓存模拟比例响应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheSimulationRatioResponse {
+    pub ratio: f64,
+}
+
+/// 设置缓存模拟比例请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetCacheSimulationRatioRequest {
+    pub ratio: f64,
+}
+
 // ============ 通用响应 ============
 
 /// 操作成功响应

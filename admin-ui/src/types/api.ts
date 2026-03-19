@@ -150,6 +150,14 @@ export interface RpmSnapshot {
 
 // ============ 代理池 ============
 
+export interface CacheSimulationRatioResponse {
+  ratio: number
+}
+
+export interface SetCacheSimulationRatioRequest {
+  ratio: number
+}
+
 export interface ProxyPoolEntry {
   id: number
   name: string

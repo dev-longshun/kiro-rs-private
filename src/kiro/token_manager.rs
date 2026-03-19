@@ -536,6 +536,8 @@ pub struct MultiTokenManager {
     is_multiple_format: AtomicBool,
     /// 负载均衡模式（运行时可修改）
     load_balancing_mode: Mutex<String>,
+    /// 缓存模拟比例（运行时可修改，0.0 ~ 1.0）
+    cache_simulation_ratio: Arc<Mutex<f64>>,
     /// 最近一次统计持久化时间（用于 debounce）
     last_stats_save_at: Mutex<Option<Instant>>,
     /// 统计数据是否有未落盘更新
@@ -648,6 +650,7 @@ impl MultiTokenManager {
             .collect();
 
         let load_balancing_mode = config.load_balancing_mode.clone();
+        let cache_simulation_ratio = config.cache_simulation_ratio;
         let manager = Self {
             config,
             proxy,
@@ -657,6 +660,7 @@ impl MultiTokenManager {
             credentials_path,
             is_multiple_format: AtomicBool::new(is_multiple_format),
             load_balancing_mode: Mutex::new(load_balancing_mode),
+            cache_simulation_ratio: Arc::new(Mutex::new(cache_simulation_ratio)),
             last_stats_save_at: Mutex::new(None),
             stats_dirty: AtomicBool::new(false),
             rr_counter: AtomicU64::new(0),
@@ -1910,6 +1914,53 @@ impl MultiTokenManager {
         }
 
         tracing::info!("负载均衡模式已设置为: {}", mode);
+        Ok(())
+    }
+
+    /// 获取缓存模拟比例
+    pub fn get_cache_simulation_ratio(&self) -> f64 {
+        *self.cache_simulation_ratio.lock()
+    }
+
+    /// 获取缓存模拟比例的 Arc 引用（用于注入 AppState）
+    pub fn cache_simulation_ratio_ref(&self) -> Arc<Mutex<f64>> {
+        self.cache_simulation_ratio.clone()
+    }
+
+    fn persist_cache_simulation_ratio(&self, ratio: f64) -> anyhow::Result<()> {
+        use anyhow::Context;
+
+        let config_path = match self.config.config_path() {
+            Some(path) => path.to_path_buf(),
+            None => {
+                tracing::warn!("配置文件路径未知，缓存模拟比例仅在当前进程生效: {}", ratio);
+                return Ok(());
+            }
+        };
+
+        let mut config = Config::load(&config_path)
+            .with_context(|| format!("重新加载配置失败: {}", config_path.display()))?;
+        config.cache_simulation_ratio = ratio;
+        config
+            .save()
+            .with_context(|| format!("持久化缓存模拟比例失败: {}", config_path.display()))?;
+
+        Ok(())
+    }
+
+    /// 设置缓存模拟比例（Admin API）
+    pub fn set_cache_simulation_ratio(&self, ratio: f64) -> anyhow::Result<()> {
+        if !(0.0..=1.0).contains(&ratio) {
+            anyhow::bail!("缓存模拟比例必须在 0.0 ~ 1.0 之间，当前值: {}", ratio);
+        }
+
+        *self.cache_simulation_ratio.lock() = ratio;
+
+        if let Err(err) = self.persist_cache_simulation_ratio(ratio) {
+            tracing::warn!("缓存模拟比例持久化失败，仅当前进程生效: {}", err);
+        }
+
+        tracing::info!("缓存模拟比例已设置为: {}", ratio);
         Ok(())
     }
 }

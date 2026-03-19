@@ -15,6 +15,7 @@ use super::error::AdminServiceError;
 use super::types::{
     AddCredentialRequest, AddCredentialResponse, BalanceResponse, CredentialStatusItem,
     CredentialsStatusResponse, LoadBalancingModeResponse, SetLoadBalancingModeRequest,
+    CacheSimulationRatioResponse, SetCacheSimulationRatioRequest,
     UpdateCredentialRequest,
 };
 
@@ -295,6 +296,31 @@ impl AdminService {
             .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
 
         Ok(LoadBalancingModeResponse { mode: req.mode })
+    }
+
+    /// 获取缓存模拟比例
+    pub fn get_cache_simulation_ratio(&self) -> CacheSimulationRatioResponse {
+        CacheSimulationRatioResponse {
+            ratio: self.token_manager.get_cache_simulation_ratio(),
+        }
+    }
+
+    /// 设置缓存模拟比例
+    pub fn set_cache_simulation_ratio(
+        &self,
+        req: SetCacheSimulationRatioRequest,
+    ) -> Result<CacheSimulationRatioResponse, AdminServiceError> {
+        if !(0.0..=1.0).contains(&req.ratio) {
+            return Err(AdminServiceError::InvalidCredential(
+                "ratio 必须在 0.0 ~ 1.0 之间".to_string(),
+            ));
+        }
+
+        self.token_manager
+            .set_cache_simulation_ratio(req.ratio)
+            .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
+
+        Ok(CacheSimulationRatioResponse { ratio: req.ratio })
     }
 
     // ============ 余额缓存持久化 ============

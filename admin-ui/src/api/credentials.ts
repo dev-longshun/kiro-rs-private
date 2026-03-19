@@ -14,6 +14,7 @@ import type {
   UpdateApiKeyRequest,
   UsageSummary,
   RpmSnapshot,
+  CacheSimulationRatioResponse,
   ProxyPoolEntry,
   AddProxyRequest,
   UpdateProxyRequest,
@@ -109,6 +110,18 @@ export async function getLoadBalancingMode(): Promise<{ mode: 'priority' | 'bala
 // 设置负载均衡模式
 export async function setLoadBalancingMode(mode: 'priority' | 'balanced'): Promise<{ mode: 'priority' | 'balanced' }> {
   const { data } = await api.put<{ mode: 'priority' | 'balanced' }>('/config/load-balancing', { mode })
+  return data
+}
+
+// 获取缓存模拟比例
+export async function getCacheSimulationRatio(): Promise<CacheSimulationRatioResponse> {
+  const { data } = await api.get<CacheSimulationRatioResponse>('/config/cache-simulation-ratio')
+  return data
+}
+
+// 设置缓存模拟比例
+export async function setCacheSimulationRatio(ratio: number): Promise<CacheSimulationRatioResponse> {
+  const { data } = await api.put<CacheSimulationRatioResponse>('/config/cache-simulation-ratio', { ratio })
   return data
 }
 

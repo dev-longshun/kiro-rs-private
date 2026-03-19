@@ -9,6 +9,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Json, Response},
 };
+use parking_lot::Mutex;
 
 use crate::common::auth;
 use crate::kiro::provider::KiroProvider;
@@ -42,6 +43,8 @@ pub struct AppState {
     pub usage_tracker: Option<Arc<UsageTracker>>,
     /// RPM 追踪器（可选，启用 RPM 实时监控）
     pub rpm_tracker: Option<Arc<RpmTracker>>,
+    /// 缓存模拟比例（可选，运行时可修改）
+    pub cache_simulation_ratio: Option<Arc<Mutex<f64>>>,
 }
 
 impl AppState {
@@ -54,6 +57,7 @@ impl AppState {
             api_key_manager: None,
             usage_tracker: None,
             rpm_tracker: None,
+            cache_simulation_ratio: None,
         }
     }
 
@@ -84,6 +88,12 @@ impl AppState {
     /// 设置 RPM 追踪器
     pub fn with_rpm_tracker(mut self, tracker: Arc<RpmTracker>) -> Self {
         self.rpm_tracker = Some(tracker);
+        self
+    }
+
+    /// 设置缓存模拟比例
+    pub fn with_cache_simulation_ratio(mut self, ratio: Arc<Mutex<f64>>) -> Self {
+        self.cache_simulation_ratio = Some(ratio);
         self
     }
 }

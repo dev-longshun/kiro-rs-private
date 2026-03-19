@@ -10,6 +10,8 @@ import {
   updateCredential,
   getLoadBalancingMode,
   setLoadBalancingMode,
+  getCacheSimulationRatio,
+  setCacheSimulationRatio,
   getServerInfo,
   getApiKeys,
   createApiKey,
@@ -130,6 +132,25 @@ export function useSetLoadBalancingMode() {
     mutationFn: setLoadBalancingMode,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['loadBalancingMode'] })
+    },
+  })
+}
+
+// 获取缓存模拟比例
+export function useCacheSimulationRatio() {
+  return useQuery({
+    queryKey: ['cacheSimulationRatio'],
+    queryFn: getCacheSimulationRatio,
+  })
+}
+
+// 设置缓存模拟比例
+export function useSetCacheSimulationRatio() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: setCacheSimulationRatio,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cacheSimulationRatio'] })
     },
   })
 }
