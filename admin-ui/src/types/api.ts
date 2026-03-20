@@ -158,6 +158,14 @@ export interface SetCacheSimulationRatioRequest {
   ratio: number
 }
 
+export interface CacheCreationRatioResponse {
+  ratio: number
+}
+
+export interface SetCacheCreationRatioRequest {
+  ratio: number
+}
+
 export interface ProxyPoolEntry {
   id: number
   name: string

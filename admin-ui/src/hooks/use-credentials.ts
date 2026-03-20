@@ -12,6 +12,8 @@ import {
   setLoadBalancingMode,
   getCacheSimulationRatio,
   setCacheSimulationRatio,
+  getCacheCreationRatio,
+  setCacheCreationRatio,
   getServerInfo,
   getApiKeys,
   createApiKey,
@@ -151,6 +153,25 @@ export function useSetCacheSimulationRatio() {
     mutationFn: setCacheSimulationRatio,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cacheSimulationRatio'] })
+    },
+  })
+}
+
+// 获取缓存写入比例
+export function useCacheCreationRatio() {
+  return useQuery({
+    queryKey: ['cacheCreationRatio'],
+    queryFn: getCacheCreationRatio,
+  })
+}
+
+// 设置缓存写入比例
+export function useSetCacheCreationRatio() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: setCacheCreationRatio,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cacheCreationRatio'] })
     },
   })
 }

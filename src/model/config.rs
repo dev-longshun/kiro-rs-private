@@ -95,6 +95,10 @@ pub struct Config {
     #[serde(default = "default_cache_simulation_ratio")]
     pub cache_simulation_ratio: f64,
 
+    /// 缓存写入比例（0.0 ~ 1.0），从模拟的 cache_read 中拆分出 cache_creation_input_tokens
+    #[serde(default = "default_cache_creation_ratio")]
+    pub cache_creation_ratio: f64,
+
     /// 最大并发请求数（同时发往上游的请求上限）
     #[serde(default = "default_max_concurrent_requests")]
     pub max_concurrent_requests: usize,
@@ -153,6 +157,10 @@ fn default_cache_simulation_ratio() -> f64 {
     0.5
 }
 
+fn default_cache_creation_ratio() -> f64 {
+    0.1
+}
+
 fn default_max_concurrent_requests() -> usize {
     200
 }
@@ -188,6 +196,7 @@ impl Default for Config {
             admin_api_key: None,
             load_balancing_mode: default_load_balancing_mode(),
             cache_simulation_ratio: default_cache_simulation_ratio(),
+            cache_creation_ratio: default_cache_creation_ratio(),
             max_concurrent_requests: default_max_concurrent_requests(),
             cooldown_secs: default_cooldown_secs(),
             pool_max_idle_per_host: default_pool_max_idle_per_host(),
@@ -262,6 +271,7 @@ impl Config {
     /// - `PROXY_PASSWORD`: 代理密码
     /// - `LOAD_BALANCING_MODE`: 负载均衡模式
     /// - `CACHE_SIMULATION_RATIO`: 缓存模拟比例（0.0 ~ 1.0）
+    /// - `CACHE_CREATION_RATIO`: 缓存写入比例（0.0 ~ 1.0）
     pub fn apply_env_overrides(&mut self) {
         if let Ok(v) = env::var("API_KEY") {
             self.api_key = Some(v);
@@ -301,6 +311,11 @@ impl Config {
         if let Ok(v) = env::var("CACHE_SIMULATION_RATIO") {
             if let Ok(r) = v.parse::<f64>() {
                 self.cache_simulation_ratio = r;
+            }
+        }
+        if let Ok(v) = env::var("CACHE_CREATION_RATIO") {
+            if let Ok(r) = v.parse::<f64>() {
+                self.cache_creation_ratio = r;
             }
         }
         if let Ok(v) = env::var("MAX_CONCURRENT_REQUESTS") {

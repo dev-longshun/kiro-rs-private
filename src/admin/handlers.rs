@@ -10,7 +10,7 @@ use super::{
     middleware::AdminState,
     types::{
         AddCredentialRequest, SetDisabledRequest, SetLoadBalancingModeRequest, SetPriorityRequest,
-        SetCacheSimulationRatioRequest, SuccessResponse, UpdateCredentialRequest,
+        SetCacheSimulationRatioRequest, SetCacheCreationRatioRequest, SuccessResponse, UpdateCredentialRequest,
     },
 };
 
@@ -152,6 +152,25 @@ pub async fn set_cache_simulation_ratio(
     Json(payload): Json<SetCacheSimulationRatioRequest>,
 ) -> impl IntoResponse {
     match state.service.set_cache_simulation_ratio(payload) {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// GET /api/admin/config/cache-creation-ratio
+/// 获取缓存写入比例
+pub async fn get_cache_creation_ratio(State(state): State<AdminState>) -> impl IntoResponse {
+    let response = state.service.get_cache_creation_ratio();
+    Json(response)
+}
+
+/// PUT /api/admin/config/cache-creation-ratio
+/// 设置缓存写入比例
+pub async fn set_cache_creation_ratio(
+    State(state): State<AdminState>,
+    Json(payload): Json<SetCacheCreationRatioRequest>,
+) -> impl IntoResponse {
+    match state.service.set_cache_creation_ratio(payload) {
         Ok(response) => Json(response).into_response(),
         Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
     }

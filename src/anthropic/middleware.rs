@@ -45,6 +45,8 @@ pub struct AppState {
     pub rpm_tracker: Option<Arc<RpmTracker>>,
     /// 缓存模拟比例（可选，运行时可修改）
     pub cache_simulation_ratio: Option<Arc<Mutex<f64>>>,
+    /// 缓存写入比例（可选，运行时可修改，从 cache_read 中拆分出 cache_creation）
+    pub cache_creation_ratio: Option<Arc<Mutex<f64>>>,
 }
 
 impl AppState {
@@ -58,6 +60,7 @@ impl AppState {
             usage_tracker: None,
             rpm_tracker: None,
             cache_simulation_ratio: None,
+            cache_creation_ratio: None,
         }
     }
 
@@ -94,6 +97,12 @@ impl AppState {
     /// 设置缓存模拟比例
     pub fn with_cache_simulation_ratio(mut self, ratio: Arc<Mutex<f64>>) -> Self {
         self.cache_simulation_ratio = Some(ratio);
+        self
+    }
+
+    /// 设置缓存写入比例
+    pub fn with_cache_creation_ratio(mut self, ratio: Arc<Mutex<f64>>) -> Self {
+        self.cache_creation_ratio = Some(ratio);
         self
     }
 }

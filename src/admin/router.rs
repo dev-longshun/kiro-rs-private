@@ -12,9 +12,10 @@ use super::{
     },
     handlers::{
         add_credential, delete_credential, get_all_credentials, get_credential_balance,
-        get_load_balancing_mode, get_cache_simulation_ratio, reset_failure_count,
+        get_load_balancing_mode, get_cache_simulation_ratio, get_cache_creation_ratio,
+        reset_failure_count,
         set_credential_disabled, set_credential_priority, set_load_balancing_mode,
-        set_cache_simulation_ratio, update_credential,
+        set_cache_simulation_ratio, set_cache_creation_ratio, update_credential,
     },
     middleware::{AdminState, admin_auth_middleware},
     proxy_pool::{
@@ -42,6 +43,10 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route(
             "/config/cache-simulation-ratio",
             get(get_cache_simulation_ratio).put(set_cache_simulation_ratio),
+        )
+        .route(
+            "/config/cache-creation-ratio",
+            get(get_cache_creation_ratio).put(set_cache_creation_ratio),
         )
         // API Key 管理
         .route("/server-info", get(get_server_info))

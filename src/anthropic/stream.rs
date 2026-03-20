@@ -497,6 +497,8 @@ pub struct StreamContext {
     cache_read_tokens: i32,
     /// 缓存模拟比例（0.0 ~ 1.0）
     cache_simulation_ratio: f64,
+    /// 缓存写入比例（0.0 ~ 1.0，从 cache_read 中拆分出 cache_creation）
+    cache_creation_ratio: f64,
 }
 
 impl StreamContext {
@@ -525,6 +527,7 @@ impl StreamContext {
             api_key_id: None,
             cache_read_tokens: 0,
             cache_simulation_ratio: 0.0,
+            cache_creation_ratio: 0.0,
         }
     }
 
@@ -551,10 +554,18 @@ impl StreamContext {
         self
     }
 
+    /// 设置缓存写入比例
+    pub fn with_cache_creation_ratio(mut self, ratio: f64) -> Self {
+        self.cache_creation_ratio = ratio;
+        self
+    }
+
     /// 生成 message_start 事件
     pub fn create_message_start_event(&self) -> serde_json::Value {
-        let simulated_cache_read = (self.input_tokens as f64 * self.cache_simulation_ratio) as i32;
-        let reported_input_tokens = self.input_tokens - simulated_cache_read;
+        let simulated_cache_read_total = (self.input_tokens as f64 * self.cache_simulation_ratio) as i32;
+        let simulated_cache_creation = (simulated_cache_read_total as f64 * self.cache_creation_ratio) as i32;
+        let simulated_cache_read = simulated_cache_read_total - simulated_cache_creation;
+        let reported_input_tokens = self.input_tokens - simulated_cache_read_total;
         json!({
             "type": "message_start",
             "message": {
@@ -568,7 +579,7 @@ impl StreamContext {
                 "usage": {
                     "input_tokens": reported_input_tokens,
                     "output_tokens": 1,
-                    "cache_creation_input_tokens": 0,
+                    "cache_creation_input_tokens": simulated_cache_creation,
                     "cache_read_input_tokens": simulated_cache_read
                 }
             }
@@ -1104,8 +1115,10 @@ impl StreamContext {
         };
 
         // 计算缓存模拟字段
-        let simulated_cache_read = (final_input_tokens as f64 * self.cache_simulation_ratio) as i32;
-        let reported_input_tokens = final_input_tokens - simulated_cache_read;
+        let simulated_cache_read_total = (final_input_tokens as f64 * self.cache_simulation_ratio) as i32;
+        let _simulated_cache_creation = (simulated_cache_read_total as f64 * self.cache_creation_ratio) as i32;
+        let _simulated_cache_read = simulated_cache_read_total - _simulated_cache_creation;
+        let reported_input_tokens = final_input_tokens - simulated_cache_read_total;
 
         // 记录用量
         if let (Some(tracker), Some(key_id)) = (&self.usage_tracker, self.api_key_id) {
@@ -1181,7 +1194,11 @@ impl BufferedStreamContext {
         self
     }
 
-    /// 处理 Kiro 事件（两阶段工作流）
+    /// 设置缓存写入比例
+    pub fn with_cache_creation_ratio(mut self, ratio: f64) -> Self {
+        self.inner = self.inner.with_cache_creation_ratio(ratio);
+        self
+    }
     ///
     /// - Phase A（未 flush）：事件处理后缓冲，检查是否收到 contextUsageEvent，
     ///   收到后修正 message_start 中的 input_tokens 并 flush 全部缓冲事件。
@@ -1213,14 +1230,16 @@ impl BufferedStreamContext {
         if self.inner.context_input_tokens.is_some() {
             // 修正 message_start 中的 input_tokens（含缓存模拟）
             let final_input_tokens = self.inner.context_input_tokens.unwrap();
-            let simulated_cache_read = (final_input_tokens as f64 * self.inner.cache_simulation_ratio) as i32;
-            let reported_input_tokens = final_input_tokens - simulated_cache_read;
+            let simulated_cache_read_total = (final_input_tokens as f64 * self.inner.cache_simulation_ratio) as i32;
+            let simulated_cache_creation = (simulated_cache_read_total as f64 * self.inner.cache_creation_ratio) as i32;
+            let simulated_cache_read = simulated_cache_read_total - simulated_cache_creation;
+            let reported_input_tokens = final_input_tokens - simulated_cache_read_total;
             for event in &mut self.event_buffer {
                 if event.event == "message_start" {
                     if let Some(message) = event.data.get_mut("message") {
                         if let Some(usage) = message.get_mut("usage") {
                             usage["input_tokens"] = serde_json::json!(reported_input_tokens);
-                            usage["cache_creation_input_tokens"] = serde_json::json!(0);
+                            usage["cache_creation_input_tokens"] = serde_json::json!(simulated_cache_creation);
                             usage["cache_read_input_tokens"] = serde_json::json!(simulated_cache_read);
                         }
                     }
@@ -1261,15 +1280,17 @@ impl BufferedStreamContext {
             .context_input_tokens
             .unwrap_or(self.estimated_input_tokens);
 
-        let simulated_cache_read = (final_input_tokens as f64 * self.inner.cache_simulation_ratio) as i32;
-        let reported_input_tokens = final_input_tokens - simulated_cache_read;
+        let simulated_cache_read_total = (final_input_tokens as f64 * self.inner.cache_simulation_ratio) as i32;
+        let simulated_cache_creation = (simulated_cache_read_total as f64 * self.inner.cache_creation_ratio) as i32;
+        let simulated_cache_read = simulated_cache_read_total - simulated_cache_creation;
+        let reported_input_tokens = final_input_tokens - simulated_cache_read_total;
 
         for event in &mut self.event_buffer {
             if event.event == "message_start" {
                 if let Some(message) = event.data.get_mut("message") {
                     if let Some(usage) = message.get_mut("usage") {
                         usage["input_tokens"] = serde_json::json!(reported_input_tokens);
-                        usage["cache_creation_input_tokens"] = serde_json::json!(0);
+                        usage["cache_creation_input_tokens"] = serde_json::json!(simulated_cache_creation);
                         usage["cache_read_input_tokens"] = serde_json::json!(simulated_cache_read);
                     }
                 }

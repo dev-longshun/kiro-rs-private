@@ -16,6 +16,7 @@ use super::types::{
     AddCredentialRequest, AddCredentialResponse, BalanceResponse, CredentialStatusItem,
     CredentialsStatusResponse, LoadBalancingModeResponse, SetLoadBalancingModeRequest,
     CacheSimulationRatioResponse, SetCacheSimulationRatioRequest,
+    CacheCreationRatioResponse, SetCacheCreationRatioRequest,
     UpdateCredentialRequest,
 };
 
@@ -321,6 +322,31 @@ impl AdminService {
             .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
 
         Ok(CacheSimulationRatioResponse { ratio: req.ratio })
+    }
+
+    /// 获取缓存写入比例
+    pub fn get_cache_creation_ratio(&self) -> CacheCreationRatioResponse {
+        CacheCreationRatioResponse {
+            ratio: self.token_manager.get_cache_creation_ratio(),
+        }
+    }
+
+    /// 设置缓存写入比例
+    pub fn set_cache_creation_ratio(
+        &self,
+        req: SetCacheCreationRatioRequest,
+    ) -> Result<CacheCreationRatioResponse, AdminServiceError> {
+        if !(0.0..=1.0).contains(&req.ratio) {
+            return Err(AdminServiceError::InvalidCredential(
+                "ratio 必须在 0.0 ~ 1.0 之间".to_string(),
+            ));
+        }
+
+        self.token_manager
+            .set_cache_creation_ratio(req.ratio)
+            .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
+
+        Ok(CacheCreationRatioResponse { ratio: req.ratio })
     }
 
     // ============ 余额缓存持久化 ============

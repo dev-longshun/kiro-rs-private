@@ -14,7 +14,7 @@ import { KamImportDialog } from '@/components/kam-import-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ApiKeysPanel } from '@/components/api-keys-panel'
 import { ProxyPoolPanel } from '@/components/proxy-pool-panel'
-import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useCacheSimulationRatio, useSetCacheSimulationRatio, useRpm } from '@/hooks/use-credentials'
+import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useCacheSimulationRatio, useSetCacheSimulationRatio, useCacheCreationRatio, useSetCacheCreationRatio, useRpm } from '@/hooks/use-credentials'
 import { getCredentialBalance } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import type { BalanceResponse } from '@/types/api'
@@ -58,6 +58,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const { mutate: setLoadBalancingMode, isPending: isSettingMode } = useSetLoadBalancingMode()
   const { data: cacheRatioData, isLoading: isLoadingCacheRatio } = useCacheSimulationRatio()
   const { mutate: setCacheSimulationRatio, isPending: isSettingCacheRatio } = useSetCacheSimulationRatio()
+  const { data: cacheCreationData, isLoading: isLoadingCacheCreation } = useCacheCreationRatio()
+  const { mutate: setCacheCreationRatio, isPending: isSettingCacheCreation } = useSetCacheCreationRatio()
 
   // 计算分页
   const totalPages = Math.ceil((data?.credentials.length || 0) / itemsPerPage)
@@ -481,6 +483,21 @@ export function Dashboard({ onLogout }: DashboardProps) {
     })
   }
 
+  // 缓存写入比例下拉菜单
+  const [cacheCreationDropdownOpen, setCacheCreationDropdownOpen] = useState(false)
+  const cacheCreationSteps = [0, 0.05, 0.1, 0.15, 0.2]
+  const handleSetCacheCreationRatio = (ratio: number) => {
+    setCacheCreationDropdownOpen(false)
+    setCacheCreationRatio(ratio, {
+      onSuccess: () => {
+        toast.success(`缓存写入比例已设置为 ${Math.round(ratio * 100)}%`)
+      },
+      onError: (error) => {
+        toast.error(`设置失败: ${extractErrorMessage(error)}`)
+      }
+    })
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -584,6 +601,37 @@ export function Dashboard({ onLogout }: DashboardProps) {
                           className={`w-full text-left rounded-sm px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground ${isCurrent ? 'bg-accent font-medium' : ''}`}
                         >
                           {pct}%{ratio === 0.5 ? ' (默认)' : ''}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="relative hidden sm:inline-flex">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCacheCreationDropdownOpen(!cacheCreationDropdownOpen)}
+                disabled={isLoadingCacheCreation || isSettingCacheCreation}
+                title="设置缓存写入比例"
+              >
+                {isLoadingCacheCreation ? '加载中...' : `写入 ${Math.round((cacheCreationData?.ratio ?? 0.1) * 100)}%`}
+              </Button>
+              {cacheCreationDropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setCacheCreationDropdownOpen(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[120px] rounded-md border bg-popover p-1 shadow-md">
+                    {cacheCreationSteps.map(ratio => {
+                      const pct = Math.round(ratio * 100)
+                      const isCurrent = Math.abs((cacheCreationData?.ratio ?? 0.1) - ratio) < 0.01
+                      return (
+                        <button
+                          key={ratio}
+                          onClick={() => handleSetCacheCreationRatio(ratio)}
+                          className={`w-full text-left rounded-sm px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground ${isCurrent ? 'bg-accent font-medium' : ''}`}
+                        >
+                          {pct}%{ratio === 0.1 ? ' (默认)' : ''}
                         </button>
                       )
                     })}

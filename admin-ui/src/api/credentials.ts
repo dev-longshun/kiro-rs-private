@@ -15,6 +15,7 @@ import type {
   UsageSummary,
   RpmSnapshot,
   CacheSimulationRatioResponse,
+  CacheCreationRatioResponse,
   ProxyPoolEntry,
   AddProxyRequest,
   UpdateProxyRequest,
@@ -122,6 +123,18 @@ export async function getCacheSimulationRatio(): Promise<CacheSimulationRatioRes
 // 设置缓存模拟比例
 export async function setCacheSimulationRatio(ratio: number): Promise<CacheSimulationRatioResponse> {
   const { data } = await api.put<CacheSimulationRatioResponse>('/config/cache-simulation-ratio', { ratio })
+  return data
+}
+
+// 获取缓存写入比例
+export async function getCacheCreationRatio(): Promise<CacheCreationRatioResponse> {
+  const { data } = await api.get<CacheCreationRatioResponse>('/config/cache-creation-ratio')
+  return data
+}
+
+// 设置缓存写入比例
+export async function setCacheCreationRatio(ratio: number): Promise<CacheCreationRatioResponse> {
+  const { data } = await api.put<CacheCreationRatioResponse>('/config/cache-creation-ratio', { ratio })
   return data
 }
 
