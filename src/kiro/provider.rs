@@ -43,6 +43,12 @@ pub struct KiroProvider {
     tls_backend: TlsBackend,
     /// 并发控制信号量，限制同时发往上游的请求数
     concurrency_limit: Arc<Semaphore>,
+    /// Per-credential 并发信号量池
+    credential_limits: Mutex<HashMap<u64, Arc<Semaphore>>>,
+    /// 单凭据最大并发数（从 TokenManager 注入的动态值）
+    max_concurrent_per_credential: Arc<parking_lot::Mutex<usize>>,
+    /// 上次创建信号量时的限制值（用于检测变更）
+    last_credential_limit: Mutex<usize>,
     /// RPM 追踪器（可选，用于记录凭据维度的 RPM）
     rpm_tracker: Option<Arc<RpmTracker>>,
     /// 代理池（可选，用于 round-robin 分配代理）
@@ -60,6 +66,7 @@ impl KiroProvider {
         let config = token_manager.config();
         let tls_backend = config.tls_backend;
         let max_concurrent = config.max_concurrent_requests;
+        let max_per_credential = config.max_concurrent_per_credential;
         let pool_max_idle = config.pool_max_idle_per_host;
         // 预热：构建全局代理对应的 Client
         let initial_client = build_client(proxy.as_ref(), 180, tls_backend, pool_max_idle)
@@ -67,9 +74,12 @@ impl KiroProvider {
         let mut cache = HashMap::new();
         cache.insert(proxy.clone(), initial_client);
 
+        let max_concurrent_per_credential = token_manager.max_concurrent_per_credential_ref();
+
         tracing::info!(
-            "KiroProvider 初始化: max_concurrent_requests={}, pool_max_idle_per_host={}",
+            "KiroProvider 初始化: max_concurrent_requests={}, max_concurrent_per_credential={}, pool_max_idle_per_host={}",
             max_concurrent,
+            max_per_credential,
             pool_max_idle
         );
 
@@ -79,6 +89,9 @@ impl KiroProvider {
             client_cache: Mutex::new(cache),
             tls_backend,
             concurrency_limit: Arc::new(Semaphore::new(max_concurrent)),
+            credential_limits: Mutex::new(HashMap::new()),
+            max_concurrent_per_credential,
+            last_credential_limit: Mutex::new(max_per_credential),
             rpm_tracker: None,
             proxy_pool: None,
         }
@@ -131,6 +144,27 @@ impl KiroProvider {
     /// 获取 token_manager 的引用
     pub fn token_manager(&self) -> &MultiTokenManager {
         &self.token_manager
+    }
+
+    /// 获取指定凭据的并发信号量（若限制为 0 则返回 None）
+    ///
+    /// 当限制值变更时，清空信号量池重建
+    fn credential_semaphore(&self, id: u64) -> Option<Arc<Semaphore>> {
+        let limit = *self.max_concurrent_per_credential.lock();
+        if limit == 0 {
+            return None;
+        }
+
+        let mut pool = self.credential_limits.lock();
+        let mut last = self.last_credential_limit.lock();
+
+        // 限制值变更时清空池，让后续请求用新容量重建
+        if *last != limit {
+            pool.clear();
+            *last = limit;
+        }
+
+        Some(pool.entry(id).or_insert_with(|| Arc::new(Semaphore::new(limit))).clone())
     }
 
     /// 获取 API 基础 URL（使用 config 级 api_region）
@@ -364,7 +398,13 @@ impl KiroProvider {
                 }
             };
 
-            // 获取信号量 permit，仅包裹 HTTP 发送阶段
+            // 获取 per-credential 信号量 permit（若配置了限制）
+            let _cred_permit = match self.credential_semaphore(ctx.id) {
+                Some(sem) => Some(sem.acquire_owned().await.map_err(|e| anyhow::anyhow!(e))?),
+                None => None,
+            };
+
+            // 获取全局信号量 permit，仅包裹 HTTP 发送阶段
             let permit = self.concurrency_limit.acquire().await?;
 
             // 发送请求
@@ -519,7 +559,13 @@ impl KiroProvider {
                 }
             };
 
-            // 获取信号量 permit，仅包裹 HTTP 发送阶段
+            // 获取 per-credential 信号量 permit（若配置了限制）
+            let _cred_permit = match self.credential_semaphore(ctx.id) {
+                Some(sem) => Some(sem.acquire_owned().await.map_err(|e| anyhow::anyhow!(e))?),
+                None => None,
+            };
+
+            // 获取全局信号量 permit，仅包裹 HTTP 发送阶段
             let permit = self.concurrency_limit.acquire().await?;
 
             // 发送请求

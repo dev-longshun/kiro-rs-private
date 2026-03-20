@@ -14,6 +14,8 @@ import {
   setCacheSimulationRatio,
   getCacheCreationRatio,
   setCacheCreationRatio,
+  getCredentialConcurrency,
+  setCredentialConcurrency,
   getServerInfo,
   getApiKeys,
   createApiKey,
@@ -172,6 +174,25 @@ export function useSetCacheCreationRatio() {
     mutationFn: setCacheCreationRatio,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cacheCreationRatio'] })
+    },
+  })
+}
+
+// 获取凭据并发限制
+export function useCredentialConcurrency() {
+  return useQuery({
+    queryKey: ['credentialConcurrency'],
+    queryFn: getCredentialConcurrency,
+  })
+}
+
+// 设置凭据并发限制
+export function useSetCredentialConcurrency() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: setCredentialConcurrency,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentialConcurrency'] })
     },
   })
 }

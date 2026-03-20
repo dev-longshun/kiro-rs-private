@@ -107,6 +107,10 @@ pub struct Config {
     #[serde(default = "default_cooldown_secs")]
     pub cooldown_secs: u64,
 
+    /// 单凭据最大并发请求数（0 表示不限制）
+    #[serde(default = "default_max_concurrent_per_credential")]
+    pub max_concurrent_per_credential: usize,
+
     /// 连接池每个 host 最大空闲连接数
     #[serde(default = "default_pool_max_idle_per_host")]
     pub pool_max_idle_per_host: usize,
@@ -173,6 +177,10 @@ fn default_pool_max_idle_per_host() -> usize {
     10
 }
 
+fn default_max_concurrent_per_credential() -> usize {
+    100
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -199,6 +207,7 @@ impl Default for Config {
             cache_creation_ratio: default_cache_creation_ratio(),
             max_concurrent_requests: default_max_concurrent_requests(),
             cooldown_secs: default_cooldown_secs(),
+            max_concurrent_per_credential: default_max_concurrent_per_credential(),
             pool_max_idle_per_host: default_pool_max_idle_per_host(),
             config_path: None,
         }
@@ -331,6 +340,11 @@ impl Config {
         if let Ok(v) = env::var("POOL_MAX_IDLE_PER_HOST") {
             if let Ok(n) = v.parse::<usize>() {
                 self.pool_max_idle_per_host = n;
+            }
+        }
+        if let Ok(v) = env::var("MAX_CONCURRENT_PER_CREDENTIAL") {
+            if let Ok(n) = v.parse::<usize>() {
+                self.max_concurrent_per_credential = n;
             }
         }
     }

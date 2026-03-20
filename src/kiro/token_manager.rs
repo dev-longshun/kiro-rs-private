@@ -540,6 +540,8 @@ pub struct MultiTokenManager {
     cache_simulation_ratio: Arc<Mutex<f64>>,
     /// 缓存写入比例（运行时可修改，0.0 ~ 1.0，从 cache_read 中拆分出 cache_creation）
     cache_creation_ratio: Arc<Mutex<f64>>,
+    /// 单凭据最大并发数（运行时可修改，0 表示不限制）
+    max_concurrent_per_credential: Arc<Mutex<usize>>,
     /// 最近一次统计持久化时间（用于 debounce）
     last_stats_save_at: Mutex<Option<Instant>>,
     /// 统计数据是否有未落盘更新
@@ -654,6 +656,7 @@ impl MultiTokenManager {
         let load_balancing_mode = config.load_balancing_mode.clone();
         let cache_simulation_ratio = config.cache_simulation_ratio;
         let cache_creation_ratio = config.cache_creation_ratio;
+        let max_concurrent_per_credential = config.max_concurrent_per_credential;
         let manager = Self {
             config,
             proxy,
@@ -665,6 +668,7 @@ impl MultiTokenManager {
             load_balancing_mode: Mutex::new(load_balancing_mode),
             cache_simulation_ratio: Arc::new(Mutex::new(cache_simulation_ratio)),
             cache_creation_ratio: Arc::new(Mutex::new(cache_creation_ratio)),
+            max_concurrent_per_credential: Arc::new(Mutex::new(max_concurrent_per_credential)),
             last_stats_save_at: Mutex::new(None),
             stats_dirty: AtomicBool::new(false),
             rr_counter: AtomicU64::new(0),
@@ -2012,6 +2016,49 @@ impl MultiTokenManager {
         }
 
         tracing::info!("缓存写入比例已设置为: {}", ratio);
+        Ok(())
+    }
+
+    /// 获取单凭据最大并发数
+    pub fn get_max_concurrent_per_credential(&self) -> usize {
+        *self.max_concurrent_per_credential.lock()
+    }
+
+    /// 获取单凭据最大并发数的 Arc 引用（用于注入 KiroProvider）
+    pub fn max_concurrent_per_credential_ref(&self) -> Arc<Mutex<usize>> {
+        self.max_concurrent_per_credential.clone()
+    }
+
+    fn persist_max_concurrent_per_credential(&self, limit: usize) -> anyhow::Result<()> {
+        use anyhow::Context;
+
+        let config_path = match self.config.config_path() {
+            Some(path) => path.to_path_buf(),
+            None => {
+                tracing::warn!("配置文件路径未知，单凭据并发限制仅在当前进程生效: {}", limit);
+                return Ok(());
+            }
+        };
+
+        let mut config = Config::load(&config_path)
+            .with_context(|| format!("重新加载配置失败: {}", config_path.display()))?;
+        config.max_concurrent_per_credential = limit;
+        config
+            .save()
+            .with_context(|| format!("持久化单凭据并发限制失败: {}", config_path.display()))?;
+
+        Ok(())
+    }
+
+    /// 设置单凭据最大并发数（Admin API）
+    pub fn set_max_concurrent_per_credential(&self, limit: usize) -> anyhow::Result<()> {
+        *self.max_concurrent_per_credential.lock() = limit;
+
+        if let Err(err) = self.persist_max_concurrent_per_credential(limit) {
+            tracing::warn!("单凭据并发限制持久化失败，仅当前进程生效: {}", err);
+        }
+
+        tracing::info!("单凭据最大并发数已设置为: {}", limit);
         Ok(())
     }
 }

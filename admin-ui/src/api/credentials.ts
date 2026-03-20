@@ -16,6 +16,7 @@ import type {
   RpmSnapshot,
   CacheSimulationRatioResponse,
   CacheCreationRatioResponse,
+  CredentialConcurrencyResponse,
   ProxyPoolEntry,
   AddProxyRequest,
   UpdateProxyRequest,
@@ -135,6 +136,18 @@ export async function getCacheCreationRatio(): Promise<CacheCreationRatioRespons
 // 设置缓存写入比例
 export async function setCacheCreationRatio(ratio: number): Promise<CacheCreationRatioResponse> {
   const { data } = await api.put<CacheCreationRatioResponse>('/config/cache-creation-ratio', { ratio })
+  return data
+}
+
+// 获取凭据并发限制
+export async function getCredentialConcurrency(): Promise<CredentialConcurrencyResponse> {
+  const { data } = await api.get<CredentialConcurrencyResponse>('/config/credential-concurrency')
+  return data
+}
+
+// 设置凭据并发限制
+export async function setCredentialConcurrency(limit: number): Promise<CredentialConcurrencyResponse> {
+  const { data } = await api.put<CredentialConcurrencyResponse>('/config/credential-concurrency', { limit })
   return data
 }
 

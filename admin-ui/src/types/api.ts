@@ -166,6 +166,14 @@ export interface SetCacheCreationRatioRequest {
   ratio: number
 }
 
+export interface CredentialConcurrencyResponse {
+  limit: number
+}
+
+export interface SetCredentialConcurrencyRequest {
+  limit: number
+}
+
 export interface ProxyPoolEntry {
   id: number
   name: string

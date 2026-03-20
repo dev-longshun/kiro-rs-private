@@ -14,7 +14,7 @@ import { KamImportDialog } from '@/components/kam-import-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ApiKeysPanel } from '@/components/api-keys-panel'
 import { ProxyPoolPanel } from '@/components/proxy-pool-panel'
-import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useCacheSimulationRatio, useSetCacheSimulationRatio, useCacheCreationRatio, useSetCacheCreationRatio, useRpm } from '@/hooks/use-credentials'
+import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useCacheSimulationRatio, useSetCacheSimulationRatio, useCacheCreationRatio, useSetCacheCreationRatio, useCredentialConcurrency, useSetCredentialConcurrency, useRpm } from '@/hooks/use-credentials'
 import { getCredentialBalance } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import type { BalanceResponse } from '@/types/api'
@@ -60,6 +60,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const { mutate: setCacheSimulationRatio, isPending: isSettingCacheRatio } = useSetCacheSimulationRatio()
   const { data: cacheCreationData, isLoading: isLoadingCacheCreation } = useCacheCreationRatio()
   const { mutate: setCacheCreationRatio, isPending: isSettingCacheCreation } = useSetCacheCreationRatio()
+  const { data: concurrencyData, isLoading: isLoadingConcurrency } = useCredentialConcurrency()
+  const { mutate: setCredentialConcurrency, isPending: isSettingConcurrency } = useSetCredentialConcurrency()
 
   // 计算分页
   const totalPages = Math.ceil((data?.credentials.length || 0) / itemsPerPage)
@@ -498,6 +500,21 @@ export function Dashboard({ onLogout }: DashboardProps) {
     })
   }
 
+  // 凭据并发限制下拉菜单
+  const [concurrencyDropdownOpen, setConcurrencyDropdownOpen] = useState(false)
+  const concurrencySteps = [0, 50, 100, 150, 200]
+  const handleSetConcurrency = (limit: number) => {
+    setConcurrencyDropdownOpen(false)
+    setCredentialConcurrency(limit, {
+      onSuccess: () => {
+        toast.success(`凭据并发限制已设置为 ${limit === 0 ? '不限制' : limit}`)
+      },
+      onError: (error) => {
+        toast.error(`设置失败: ${extractErrorMessage(error)}`)
+      }
+    })
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -632,6 +649,36 @@ export function Dashboard({ onLogout }: DashboardProps) {
                           className={`w-full text-left rounded-sm px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground ${isCurrent ? 'bg-accent font-medium' : ''}`}
                         >
                           {pct}%{ratio === 0.1 ? ' (默认)' : ''}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="relative hidden sm:inline-flex">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConcurrencyDropdownOpen(!concurrencyDropdownOpen)}
+                disabled={isLoadingConcurrency || isSettingConcurrency}
+                title="设置单凭据并发限制"
+              >
+                {isLoadingConcurrency ? '加载中...' : `并发 ${(concurrencyData?.limit ?? 100) === 0 ? '不限' : concurrencyData?.limit ?? 100}`}
+              </Button>
+              {concurrencyDropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setConcurrencyDropdownOpen(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[120px] rounded-md border bg-popover p-1 shadow-md">
+                    {concurrencySteps.map(limit => {
+                      const isCurrent = (concurrencyData?.limit ?? 100) === limit
+                      return (
+                        <button
+                          key={limit}
+                          onClick={() => handleSetConcurrency(limit)}
+                          className={`w-full text-left rounded-sm px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground ${isCurrent ? 'bg-accent font-medium' : ''}`}
+                        >
+                          {limit === 0 ? '不限制' : limit}{limit === 100 ? ' (默认)' : ''}
                         </button>
                       )
                     })}

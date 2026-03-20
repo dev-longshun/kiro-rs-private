@@ -10,7 +10,8 @@ use super::{
     middleware::AdminState,
     types::{
         AddCredentialRequest, SetDisabledRequest, SetLoadBalancingModeRequest, SetPriorityRequest,
-        SetCacheSimulationRatioRequest, SetCacheCreationRatioRequest, SuccessResponse, UpdateCredentialRequest,
+        SetCacheSimulationRatioRequest, SetCacheCreationRatioRequest,
+        SetCredentialConcurrencyRequest, SuccessResponse, UpdateCredentialRequest,
     },
 };
 
@@ -171,6 +172,25 @@ pub async fn set_cache_creation_ratio(
     Json(payload): Json<SetCacheCreationRatioRequest>,
 ) -> impl IntoResponse {
     match state.service.set_cache_creation_ratio(payload) {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// GET /api/admin/config/credential-concurrency
+/// 获取凭据并发限制
+pub async fn get_credential_concurrency(State(state): State<AdminState>) -> impl IntoResponse {
+    let response = state.service.get_credential_concurrency();
+    Json(response)
+}
+
+/// PUT /api/admin/config/credential-concurrency
+/// 设置凭据并发限制
+pub async fn set_credential_concurrency(
+    State(state): State<AdminState>,
+    Json(payload): Json<SetCredentialConcurrencyRequest>,
+) -> impl IntoResponse {
+    match state.service.set_credential_concurrency(payload) {
         Ok(response) => Json(response).into_response(),
         Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
     }

@@ -17,6 +17,7 @@ use super::types::{
     CredentialsStatusResponse, LoadBalancingModeResponse, SetLoadBalancingModeRequest,
     CacheSimulationRatioResponse, SetCacheSimulationRatioRequest,
     CacheCreationRatioResponse, SetCacheCreationRatioRequest,
+    CredentialConcurrencyResponse, SetCredentialConcurrencyRequest,
     UpdateCredentialRequest,
 };
 
@@ -347,6 +348,25 @@ impl AdminService {
             .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
 
         Ok(CacheCreationRatioResponse { ratio: req.ratio })
+    }
+
+    /// 获取凭据并发限制
+    pub fn get_credential_concurrency(&self) -> CredentialConcurrencyResponse {
+        CredentialConcurrencyResponse {
+            limit: self.token_manager.get_max_concurrent_per_credential(),
+        }
+    }
+
+    /// 设置凭据并发限制
+    pub fn set_credential_concurrency(
+        &self,
+        req: SetCredentialConcurrencyRequest,
+    ) -> Result<CredentialConcurrencyResponse, AdminServiceError> {
+        self.token_manager
+            .set_max_concurrent_per_credential(req.limit)
+            .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
+
+        Ok(CredentialConcurrencyResponse { limit: req.limit })
     }
 
     // ============ 余额缓存持久化 ============

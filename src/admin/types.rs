@@ -243,6 +243,22 @@ pub struct SetCacheCreationRatioRequest {
     pub ratio: f64,
 }
 
+// ============ 凭据并发配置 ============
+
+/// 凭据并发限制响应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialConcurrencyResponse {
+    pub limit: usize,
+}
+
+/// 设置凭据并发限制请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetCredentialConcurrencyRequest {
+    pub limit: usize,
+}
+
 // ============ 通用响应 ============
 
 /// 操作成功响应
