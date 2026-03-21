@@ -3,7 +3,7 @@
 ## 镜像地址
 
 ```
-ghcr.io/dev-longshun/kiro-rs-commercial:latest
+ghcr.io/dev-longshun/kiro-rs-private:latest
 ```
 
 ## 部署步骤

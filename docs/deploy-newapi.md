@@ -14,7 +14,7 @@ mkdir -p ~/new-api
 cat > ~/new-api/docker-compose.yml << 'EOF'
 services:
   new-api:
-    image: ghcr.io/dev-longshun/new-api-qns:latest
+    image: ghcr.io/dev-longshun/new-api:latest
     container_name: new-api
     restart: always
     command: --log-dir /app/logs
