@@ -5,7 +5,7 @@
 //! 支持多凭据故障转移和重试
 
 use reqwest::Client;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HOST, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONNECTION, CONTENT_TYPE, HOST, HeaderMap, HeaderValue};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -279,6 +279,7 @@ impl KiroProvider {
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {}", ctx.token)).unwrap(),
         );
+        headers.insert(CONNECTION, HeaderValue::from_static("close"));
         Ok(headers)
     }
 
@@ -322,6 +323,7 @@ impl KiroProvider {
             "Authorization",
             HeaderValue::from_str(&format!("Bearer {}", ctx.token)).unwrap(),
         );
+        headers.insert("Connection", HeaderValue::from_static("close"));
         Ok(headers)
     }
 

@@ -12,6 +12,8 @@ export interface CredentialStatusItem {
   priority: number
   disabled: boolean
   failureCount: number
+  refreshFailureCount: number
+  disabledReason?: string
   isCurrent: boolean
   expiresAt: string | null
   authMethod: string | null
