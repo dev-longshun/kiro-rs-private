@@ -142,18 +142,22 @@ export function CredentialCard({
                 checked={selected}
                 onCheckedChange={onToggleSelect}
               />
-              <CardTitle className="text-lg flex items-center gap-2">
-                {credential.email || `凭据 #${credential.id}`}
-                {credential.isCurrent && (
-                  <Badge variant="success">当前</Badge>
-                )}
+              <div>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  {credential.email || `凭据 #${credential.id}`}
+                  {credential.isCurrent && (
+                    <Badge variant="success">当前</Badge>
+                  )}
+                </CardTitle>
                 {credential.disabled && (
-                  <Badge variant="destructive">已禁用</Badge>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <Badge variant="destructive">已禁用</Badge>
+                    {credential.disabledReason && (
+                      <Badge variant="outline" className="text-xs">{credential.disabledReason}</Badge>
+                    )}
+                  </div>
                 )}
-                {credential.disabled && credential.disabledReason && (
-                  <Badge variant="outline">{credential.disabledReason}</Badge>
-                )}
-              </CardTitle>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">启用</span>
