@@ -406,6 +406,8 @@ impl SseStateManager {
         &mut self,
         input_tokens: i32,
         output_tokens: i32,
+        cache_creation_input_tokens: Option<i32>,
+        cache_read_input_tokens: Option<i32>,
     ) -> Vec<SseEvent> {
         let mut events = Vec::new();
 
@@ -426,6 +428,15 @@ impl SseStateManager {
         // 发送 message_delta
         if !self.message_delta_sent {
             self.message_delta_sent = true;
+            let mut usage = serde_json::Map::new();
+            usage.insert("input_tokens".into(), json!(input_tokens));
+            usage.insert("output_tokens".into(), json!(output_tokens));
+            if let Some(v) = cache_creation_input_tokens {
+                usage.insert("cache_creation_input_tokens".into(), json!(v));
+            }
+            if let Some(v) = cache_read_input_tokens {
+                usage.insert("cache_read_input_tokens".into(), json!(v));
+            }
             events.push(SseEvent::new(
                 "message_delta",
                 json!({
@@ -434,10 +445,7 @@ impl SseStateManager {
                         "stop_reason": self.get_stop_reason(),
                         "stop_sequence": null
                     },
-                    "usage": {
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens
-                    }
+                    "usage": usage
                 }),
             ));
         }
@@ -1116,8 +1124,8 @@ impl StreamContext {
 
         // 计算缓存模拟字段
         let simulated_cache_read_total = (final_input_tokens as f64 * self.cache_simulation_ratio) as i32;
-        let _simulated_cache_creation = (simulated_cache_read_total as f64 * self.cache_creation_ratio) as i32;
-        let _simulated_cache_read = simulated_cache_read_total - _simulated_cache_creation;
+        let simulated_cache_creation = (simulated_cache_read_total as f64 * self.cache_creation_ratio) as i32;
+        let simulated_cache_read = simulated_cache_read_total - simulated_cache_creation;
         let reported_input_tokens = final_input_tokens - simulated_cache_read_total;
 
         // 记录用量
@@ -1125,10 +1133,12 @@ impl StreamContext {
             tracker.record(key_id, self.model.clone(), final_input_tokens, self.output_tokens, final_cache_read);
         }
 
-        // 生成最终事件
+        // 生成最终事件（含修正后的缓存模拟字段）
+        let cache_creation = if self.cache_simulation_ratio > 0.0 { Some(simulated_cache_creation) } else { None };
+        let cache_read = if self.cache_simulation_ratio > 0.0 { Some(simulated_cache_read) } else { None };
         events.extend(
             self.state_manager
-                .generate_final_events(reported_input_tokens, self.output_tokens),
+                .generate_final_events(reported_input_tokens, self.output_tokens, cache_creation, cache_read),
         );
         events
     }
