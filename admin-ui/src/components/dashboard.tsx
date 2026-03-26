@@ -472,7 +472,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
   // 缓存模拟比例下拉菜单
   const [cacheDropdownOpen, setCacheDropdownOpen] = useState(false)
-  const cacheRatioSteps = [0, 0.3, 0.5, 0.7, 1.0]
+  const cacheRatioSteps = [0, 0.2, 0.5, 0.7, 0.95]
   const handleSetCacheRatio = (ratio: number) => {
     setCacheDropdownOpen(false)
     setCacheSimulationRatio(ratio, {
@@ -487,7 +487,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
   // 缓存写入比例下拉菜单
   const [cacheCreationDropdownOpen, setCacheCreationDropdownOpen] = useState(false)
-  const cacheCreationSteps = [0, 0.05, 0.1, 0.15, 0.2]
+  const cacheCreationSteps = [0, 0.1, 0.2, 0.35]
   const handleSetCacheCreationRatio = (ratio: number) => {
     setCacheCreationDropdownOpen(false)
     setCacheCreationRatio(ratio, {
