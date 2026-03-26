@@ -7,6 +7,7 @@
 use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, CONNECTION, CONTENT_TYPE, HOST, HeaderMap, HeaderValue};
 use std::collections::HashMap;
+use std::error::Error as StdError;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -422,11 +423,15 @@ impl KiroProvider {
                 Err(e) => {
                     // 释放 permit 后再 sleep
                     drop(permit);
+                    let error_kind = Self::classify_network_error(&e);
                     tracing::warn!(
-                        "MCP 请求发送失败（尝试 {}/{}）: {}",
-                        attempt + 1,
-                        max_retries,
-                        e
+                        credential_id = ctx.id,
+                        attempt = attempt + 1,
+                        max_retries = max_retries,
+                        target_url = %url,
+                        error_kind = error_kind,
+                        "MCP 请求网络错误 [{}] credential={} attempt={}/{} error_chain={:#}",
+                        error_kind, ctx.id, attempt + 1, max_retries, e
                     );
                     last_error = Some(e.into());
                     if attempt + 1 < max_retries {
@@ -453,6 +458,13 @@ impl KiroProvider {
 
             // 402 额度用尽
             if status.as_u16() == 402 && Self::is_monthly_request_limit(&body) {
+                tracing::warn!(
+                    credential_id = ctx.id,
+                    target_url = %url,
+                    status = 402u16,
+                    "MCP 请求失败（额度已用尽）credential={} attempt={}/{} body={}",
+                    ctx.id, attempt + 1, max_retries, body
+                );
                 let has_available = self.token_manager.report_quota_exhausted(ctx.id);
                 if !has_available {
                     anyhow::bail!("MCP 请求失败（所有凭据已用尽）: {} {}", status, body);
@@ -468,6 +480,13 @@ impl KiroProvider {
 
             // 401/403 凭据问题
             if matches!(status.as_u16(), 401 | 403) {
+                tracing::warn!(
+                    credential_id = ctx.id,
+                    target_url = %url,
+                    status = status.as_u16(),
+                    "MCP 请求失败（凭据/权限错误）credential={} attempt={}/{} body={}",
+                    ctx.id, attempt + 1, max_retries, body
+                );
                 let has_available = self.token_manager.report_failure(ctx.id);
                 if !has_available {
                     anyhow::bail!("MCP 请求失败（所有凭据已用尽）: {} {}", status, body);
@@ -479,11 +498,11 @@ impl KiroProvider {
             // 429 Too Many Requests — 触发冷却，直接 continue 选择其他凭据
             if status.as_u16() == 429 {
                 tracing::warn!(
-                    "MCP 请求失败（上游限流，冷却凭据并切换，尝试 {}/{}）: {} {}",
-                    attempt + 1,
-                    max_retries,
-                    status,
-                    body
+                    credential_id = ctx.id,
+                    target_url = %url,
+                    status = 429u16,
+                    "MCP 请求失败（上游限流）credential={} attempt={}/{} body={}",
+                    ctx.id, attempt + 1, max_retries, body
                 );
                 self.token_manager.report_rate_limited(ctx.id);
                 last_error = Some(anyhow::anyhow!("MCP 请求失败: {} {}", status, body));
@@ -493,11 +512,11 @@ impl KiroProvider {
             // 408/5xx - 瞬态上游错误
             if status.as_u16() == 408 || status.is_server_error() {
                 tracing::warn!(
-                    "MCP 请求失败（上游瞬态错误，尝试 {}/{}）: {} {}",
-                    attempt + 1,
-                    max_retries,
-                    status,
-                    body
+                    credential_id = ctx.id,
+                    target_url = %url,
+                    status = status.as_u16(),
+                    "MCP 请求失败（上游瞬态错误）credential={} attempt={}/{} status={} body={}",
+                    ctx.id, attempt + 1, max_retries, status, body
                 );
                 last_error = Some(anyhow::anyhow!("MCP 请求失败: {} {}", status, body));
                 if attempt + 1 < max_retries {
@@ -512,15 +531,28 @@ impl KiroProvider {
             }
 
             // 兜底
+            tracing::warn!(
+                credential_id = ctx.id,
+                target_url = %url,
+                status = status.as_u16(),
+                "MCP 请求失败（未知状态码）credential={} attempt={}/{} status={} body={}",
+                ctx.id, attempt + 1, max_retries, status, body
+            );
             last_error = Some(anyhow::anyhow!("MCP 请求失败: {} {}", status, body));
             if attempt + 1 < max_retries {
                 sleep(Self::retry_delay(attempt)).await;
             }
         }
 
-        Err(last_error.unwrap_or_else(|| {
+        let final_error = last_error.unwrap_or_else(|| {
             anyhow::anyhow!("MCP 请求失败：已达到最大重试次数（{}次）", max_retries)
-        }))
+        });
+        tracing::error!(
+            total_attempts = max_retries,
+            "MCP 请求最终失败：已耗尽全部 {} 次重试 error_chain={:#}",
+            max_retries, final_error
+        );
+        Err(final_error)
     }
 
     /// 内部方法：带重试逻辑的 API 调用
@@ -583,11 +615,15 @@ impl KiroProvider {
                 Err(e) => {
                     // 释放 permit 后再 sleep
                     drop(permit);
+                    let error_kind = Self::classify_network_error(&e);
                     tracing::warn!(
-                        "API 请求发送失败（尝试 {}/{}）: {}",
-                        attempt + 1,
-                        max_retries,
-                        e
+                        credential_id = ctx.id,
+                        attempt = attempt + 1,
+                        max_retries = max_retries,
+                        target_url = %url,
+                        error_kind = error_kind,
+                        "{} 请求网络错误 [{}] credential={} attempt={}/{} error_chain={:#}",
+                        api_type, error_kind, ctx.id, attempt + 1, max_retries, e
                     );
                     last_error = Some(e.into());
                     if attempt + 1 < max_retries {
@@ -615,11 +651,11 @@ impl KiroProvider {
             // 402 Payment Required 且额度用尽：禁用凭据并故障转移
             if status.as_u16() == 402 && Self::is_monthly_request_limit(&body) {
                 tracing::warn!(
-                    "API 请求失败（额度已用尽，禁用凭据并切换，尝试 {}/{}）: {} {}",
-                    attempt + 1,
-                    max_retries,
-                    status,
-                    body
+                    credential_id = ctx.id,
+                    target_url = %url,
+                    status = status.as_u16(),
+                    "API 请求失败（额度已用尽）credential={} attempt={}/{} status={} body={}",
+                    ctx.id, attempt + 1, max_retries, status, body
                 );
 
                 let has_available = self.token_manager.report_quota_exhausted(ctx.id);
@@ -649,11 +685,11 @@ impl KiroProvider {
             // 401/403 - 更可能是凭据/权限问题：计入失败并允许故障转移
             if matches!(status.as_u16(), 401 | 403) {
                 tracing::warn!(
-                    "API 请求失败（可能为凭据错误，尝试 {}/{}）: {} {}",
-                    attempt + 1,
-                    max_retries,
-                    status,
-                    body
+                    credential_id = ctx.id,
+                    target_url = %url,
+                    status = status.as_u16(),
+                    "API 请求失败（凭据/权限错误）credential={} attempt={}/{} status={} body={}",
+                    ctx.id, attempt + 1, max_retries, status, body
                 );
 
                 let has_available = self.token_manager.report_failure(ctx.id);
@@ -678,11 +714,11 @@ impl KiroProvider {
             // 429 Too Many Requests — 触发冷却，直接 continue 选择其他凭据
             if status.as_u16() == 429 {
                 tracing::warn!(
-                    "API 请求失败（上游限流，冷却凭据并切换，尝试 {}/{}）: {} {}",
-                    attempt + 1,
-                    max_retries,
-                    status,
-                    body
+                    credential_id = ctx.id,
+                    target_url = %url,
+                    status = 429u16,
+                    "API 请求失败（上游限流）credential={} attempt={}/{} body={}",
+                    ctx.id, attempt + 1, max_retries, body
                 );
                 self.token_manager.report_rate_limited(ctx.id);
                 last_error = Some(anyhow::anyhow!(
@@ -697,11 +733,11 @@ impl KiroProvider {
             // 408/5xx - 瞬态上游错误：重试但不禁用或切换凭据
             if status.as_u16() == 408 || status.is_server_error() {
                 tracing::warn!(
-                    "API 请求失败（上游瞬态错误，尝试 {}/{}）: {} {}",
-                    attempt + 1,
-                    max_retries,
-                    status,
-                    body
+                    credential_id = ctx.id,
+                    target_url = %url,
+                    status = status.as_u16(),
+                    "API 请求失败（上游瞬态错误）credential={} attempt={}/{} status={} body={}",
+                    ctx.id, attempt + 1, max_retries, status, body
                 );
                 last_error = Some(anyhow::anyhow!(
                     "{} API 请求失败: {} {}",
@@ -722,11 +758,11 @@ impl KiroProvider {
 
             // 兜底：当作可重试的瞬态错误处理（不切换凭据）
             tracing::warn!(
-                "API 请求失败（未知错误，尝试 {}/{}）: {} {}",
-                attempt + 1,
-                max_retries,
-                status,
-                body
+                credential_id = ctx.id,
+                target_url = %url,
+                status = status.as_u16(),
+                "API 请求失败（未知状态码）credential={} attempt={}/{} status={} body={}",
+                ctx.id, attempt + 1, max_retries, status, body
             );
             last_error = Some(anyhow::anyhow!(
                 "{} API 请求失败: {} {}",
@@ -740,13 +776,19 @@ impl KiroProvider {
         }
 
         // 所有重试都失败
-        Err(last_error.unwrap_or_else(|| {
+        let final_error = last_error.unwrap_or_else(|| {
             anyhow::anyhow!(
                 "{} API 请求失败：已达到最大重试次数（{}次）",
                 api_type,
                 max_retries
             )
-        }))
+        });
+        tracing::error!(
+            total_attempts = max_retries,
+            "{} 请求最终失败：已耗尽全部 {} 次重试 error_chain={:#}",
+            api_type, max_retries, final_error
+        );
+        Err(final_error)
     }
 
     fn retry_delay(attempt: usize) -> Duration {
@@ -758,6 +800,72 @@ impl KiroProvider {
         let jitter_max = (backoff / 4).max(1);
         let jitter = fastrand::u64(0..=jitter_max);
         Duration::from_millis(backoff.saturating_add(jitter))
+    }
+
+    /// 对网络错误进行分类，返回人类可读的错误类型标签
+    ///
+    /// 遍历 reqwest::Error 的 source chain，匹配 std::io::Error 的 kind 和 message，
+    /// 返回便于日志过滤和问题定位的分类标签。
+    fn classify_network_error(err: &reqwest::Error) -> &'static str {
+        // 优先检查 reqwest 自身的分类
+        if err.is_timeout() {
+            return "request_timeout";
+        }
+        if err.is_connect() {
+            // 进一步细分连接错误
+            let chain = format!("{:#}", err);
+            let lower = chain.to_lowercase();
+            if lower.contains("connection refused") {
+                return "connection_refused";
+            }
+            if lower.contains("timed out") || lower.contains("connect timeout") {
+                return "connection_timeout";
+            }
+            if lower.contains("dns") || lower.contains("resolve") || lower.contains("name or service not known") {
+                return "dns_error";
+            }
+            if lower.contains("tls") || lower.contains("ssl") || lower.contains("certificate") {
+                return "tls_error";
+            }
+            return "connection_error";
+        }
+
+        // 遍历 source chain 查找 io::Error
+        let mut source = err.source();
+        while let Some(cause) = source {
+            if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+                return match io_err.kind() {
+                    std::io::ErrorKind::ConnectionReset => "connection_reset",
+                    std::io::ErrorKind::ConnectionRefused => "connection_refused",
+                    std::io::ErrorKind::ConnectionAborted => "connection_aborted",
+                    std::io::ErrorKind::TimedOut => "request_timeout",
+                    std::io::ErrorKind::BrokenPipe => "broken_pipe",
+                    _ => {
+                        let msg = io_err.to_string().to_lowercase();
+                        if msg.contains("reset") {
+                            "connection_reset"
+                        } else if msg.contains("broken pipe") {
+                            "broken_pipe"
+                        } else {
+                            "io_error"
+                        }
+                    }
+                };
+            }
+            source = cause.source();
+        }
+
+        // 兜底：从错误消息文本匹配
+        let msg = format!("{:#}", err).to_lowercase();
+        if msg.contains("connection reset") || msg.contains("os error 54") {
+            "connection_reset"
+        } else if msg.contains("broken pipe") || msg.contains("os error 32") {
+            "broken_pipe"
+        } else if msg.contains("pool") {
+            "pool_error"
+        } else {
+            "unknown_network"
+        }
     }
 
     fn is_monthly_request_limit(body: &str) -> bool {
