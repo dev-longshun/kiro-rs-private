@@ -24,6 +24,7 @@ use crate::kiro::model::token_refresh::{
 };
 use crate::kiro::model::usage_limits::UsageLimitsResponse;
 use crate::model::config::Config;
+use crate::model::proxy_pool::ProxyPoolManager;
 
 /// Token 管理器
 ///
@@ -557,6 +558,8 @@ pub struct MultiTokenManager {
     stats_dirty: AtomicBool,
     /// Round-Robin 计数器（balanced 模式下用于均匀轮转凭据）
     rr_counter: AtomicU64,
+    /// 代理池管理器（用于触发 sticky 绑定重平衡）
+    proxy_pool: Mutex<Option<Arc<ProxyPoolManager>>>,
 }
 
 /// 每个凭据最大 API 调用失败次数
@@ -682,6 +685,7 @@ impl MultiTokenManager {
             last_stats_save_at: Mutex::new(None),
             stats_dirty: AtomicBool::new(false),
             rr_counter: AtomicU64::new(0),
+            proxy_pool: Mutex::new(None),
         };
 
         // 如果有新分配的 ID 或新生成的 machineId，立即持久化到配置文件
@@ -723,6 +727,31 @@ impl MultiTokenManager {
     /// 获取可用凭据数量
     pub fn available_count(&self) -> usize {
         self.entries.lock().iter().filter(|e| !e.disabled).count()
+    }
+
+    /// 设置代理池管理器（用于触发 sticky 绑定重平衡）
+    pub fn set_proxy_pool(&self, pool: Arc<ProxyPoolManager>) {
+        *self.proxy_pool.lock() = Some(pool);
+    }
+
+    /// 返回 eligible 凭据 ID 列表（未禁用且无自定义 proxy_url）
+    pub fn eligible_credential_ids(&self) -> Vec<u64> {
+        self.entries
+            .lock()
+            .iter()
+            .filter(|e| !e.disabled && e.credentials.proxy_url.is_none())
+            .map(|e| e.id)
+            .collect()
+    }
+
+    /// 触发代理池 sticky 绑定重平衡
+    fn trigger_proxy_rebalance(&self) {
+        let pool = self.proxy_pool.lock();
+        if let Some(ref pool) = *pool {
+            let eligible = self.eligible_credential_ids();
+            pool.update_eligible_credentials(eligible.clone());
+            pool.rebalance(&eligible);
+        }
     }
 
     /// 根据负载均衡模式选择下一个凭据
@@ -862,6 +891,7 @@ impl MultiTokenManager {
                                 }
                             }
                             drop(entries);
+                            self.trigger_proxy_rebalance();
                             best = self.select_next_credential(model);
                         }
                     }
@@ -1234,7 +1264,7 @@ impl MultiTokenManager {
     /// # Arguments
     /// * `id` - 凭据 ID（来自 CallContext）
     pub fn report_failure(&self, id: u64) -> bool {
-        let result = {
+        let (result, credential_disabled) = {
             let mut entries = self.entries.lock();
             let mut current_id = self.current_id.lock();
 
@@ -1259,9 +1289,11 @@ impl MultiTokenManager {
                 MAX_FAILURES_PER_CREDENTIAL
             );
 
+            let mut disabled = false;
             if failure_count >= MAX_FAILURES_PER_CREDENTIAL {
                 entry.disabled = true;
                 entry.disabled_reason = Some(DisabledReason::TooManyFailures);
+                disabled = true;
                 tracing::error!("凭据 #{} 已连续失败 {} 次，已被禁用", id, failure_count);
 
                 // 切换到优先级最高的可用凭据
@@ -1281,9 +1313,12 @@ impl MultiTokenManager {
                 }
             }
 
-            entries.iter().any(|e| !e.disabled)
+            (entries.iter().any(|e| !e.disabled), disabled)
         };
         self.save_stats_debounced();
+        if credential_disabled {
+            self.trigger_proxy_rebalance();
+        }
         result
     }
 
@@ -1347,6 +1382,7 @@ impl MultiTokenManager {
             }
         };
         self.save_stats_debounced();
+        self.trigger_proxy_rebalance();
         result
     }
 
@@ -1397,6 +1433,7 @@ impl MultiTokenManager {
             }
         };
         self.save_stats_debounced();
+        self.trigger_proxy_rebalance();
         result
     }
 
@@ -1537,6 +1574,7 @@ impl MultiTokenManager {
         }
         // 持久化更改
         self.persist_credentials()?;
+        self.trigger_proxy_rebalance();
         Ok(())
     }
 
@@ -1575,6 +1613,7 @@ impl MultiTokenManager {
         }
         // 持久化更改
         self.persist_credentials()?;
+        self.trigger_proxy_rebalance();
         Ok(())
     }
 
@@ -1792,6 +1831,7 @@ impl MultiTokenManager {
         }
 
         tracing::info!("成功添加凭据 #{}", new_id);
+        self.trigger_proxy_rebalance();
         Ok(new_id)
     }
 
@@ -1974,6 +2014,7 @@ impl MultiTokenManager {
         self.persist_credentials()?;
 
         tracing::info!("已删除凭据 #{}", id);
+        self.trigger_proxy_rebalance();
         Ok(())
     }
 

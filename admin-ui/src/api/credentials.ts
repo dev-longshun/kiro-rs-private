@@ -18,6 +18,7 @@ import type {
   CacheCreationRatioResponse,
   CredentialConcurrencyResponse,
   ProxyPoolEntry,
+  ProxyBindingEntry,
   AddProxyRequest,
   UpdateProxyRequest,
 } from '@/types/api'
@@ -242,5 +243,10 @@ export async function setProxyEnabled(id: number, enabled: boolean): Promise<Suc
 
 export async function checkProxy(id: number): Promise<ProxyPoolEntry> {
   const { data } = await api.post<ProxyPoolEntry>(`/proxy-pool/${id}/check`)
+  return data
+}
+
+export async function getProxyBindings(): Promise<ProxyBindingEntry[]> {
+  const { data } = await api.get<ProxyBindingEntry[]>('/proxy-pool/bindings')
   return data
 }

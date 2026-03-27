@@ -419,6 +419,24 @@ pub struct SetProxyEnabledRequest {
     pub enabled: bool,
 }
 
+/// 代理绑定信息（单个代理绑定了哪些凭据）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyBindingEntry {
+    pub proxy_id: u32,
+    pub proxy_name: String,
+    pub credentials: Vec<BoundCredentialInfo>,
+}
+
+/// 绑定到代理的凭据信息
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoundCredentialInfo {
+    pub id: u64,
+    pub email: Option<String>,
+    pub disabled: bool,
+}
+
 /// 区分 JSON 中"字段缺失"与"字段为 null"（String 版本）
 fn deserialize_optional_string<'de, D>(
     deserializer: D,

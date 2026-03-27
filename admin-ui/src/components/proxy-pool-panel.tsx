@@ -22,10 +22,11 @@ import {
   useDeleteProxy,
   useSetProxyEnabled,
   useCheckProxy,
+  useProxyBindings,
 } from '@/hooks/use-credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import { addProxy as addProxyApi } from '@/api/credentials'
-import type { ProxyPoolEntry, AddProxyRequest, UpdateProxyRequest } from '@/types/api'
+import type { ProxyPoolEntry, ProxyBindingEntry, AddProxyRequest, UpdateProxyRequest } from '@/types/api'
 
 export function ProxyPoolPanel() {
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -37,6 +38,7 @@ export function ProxyPoolPanel() {
   const [editForm, setEditForm] = useState<UpdateProxyRequest>({})
 
   const { data: proxies, isLoading } = useProxyPool()
+  const { data: bindings } = useProxyBindings()
   const queryClient = useQueryClient()
   const { mutate: addProxyMut, isPending: isAdding } = useAddProxy()
   const { mutate: updateProxyMut, isPending: isUpdating } = useUpdateProxy()
@@ -48,6 +50,12 @@ export function ProxyPoolPanel() {
   const healthyCount = proxies?.filter(p => p.enabled && p.healthy).length ?? 0
   const unhealthyCount = proxies?.filter(p => p.enabled && !p.healthy).length ?? 0
   const disabledCount = proxies?.filter(p => !p.enabled).length ?? 0
+
+  // 构建 proxyId → 绑定凭据列表 的映射
+  const bindingsMap = new Map<number, ProxyBindingEntry['credentials']>()
+  bindings?.forEach(b => {
+    bindingsMap.set(b.proxyId, b.credentials)
+  })
 
   const handleAdd = () => {
     if (!addForm.name.trim() || !addForm.url.trim()) {
@@ -371,6 +379,29 @@ export function ProxyPoolPanel() {
                       <span className="text-red-500">连续失败 {entry.consecutiveFailures} 次</span>
                     )}
                   </div>
+
+                  {/* 绑定凭据列表 */}
+                  {(() => {
+                    const boundCreds = bindingsMap.get(entry.id) ?? []
+                    return boundCreds.length > 0 ? (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">
+                          绑定凭据 ({boundCreds.length})
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {boundCreds.map(c => (
+                            <Badge
+                              key={c.id}
+                              variant={c.disabled ? 'secondary' : 'outline'}
+                              className={`text-xs ${c.disabled ? 'line-through opacity-50' : ''}`}
+                            >
+                              #{c.id} {c.email ? c.email.split('@')[0] : ''}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null
+                  })()}
 
                   <div className="flex items-center justify-between pt-2 border-t">
                     <Switch

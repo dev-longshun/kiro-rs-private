@@ -21,7 +21,8 @@ use super::{
     },
     middleware::{AdminState, admin_auth_middleware},
     proxy_pool::{
-        add_proxy, check_proxy, delete_proxy, list_proxies, set_proxy_enabled, update_proxy,
+        add_proxy, check_proxy, delete_proxy, get_proxy_bindings, list_proxies,
+        set_proxy_enabled, update_proxy,
     },
 };
 
@@ -64,6 +65,7 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route("/rpm", get(get_rpm))
         // 代理池管理
         .route("/proxy-pool", get(list_proxies).post(add_proxy))
+        .route("/proxy-pool/bindings", get(get_proxy_bindings))
         .route("/proxy-pool/{id}", put(update_proxy).delete(delete_proxy))
         .route("/proxy-pool/{id}/enabled", post(set_proxy_enabled))
         .route("/proxy-pool/{id}/check", post(check_proxy))

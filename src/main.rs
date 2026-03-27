@@ -180,9 +180,13 @@ async fn async_main() {
         None
     };
 
-    // 注入代理池到 KiroProvider
+    // 注入代理池到 KiroProvider，并设置 sticky 绑定
     if let Some(ref pool) = proxy_pool_manager {
         kiro_provider = kiro_provider.with_proxy_pool(pool.clone());
+        token_manager.set_proxy_pool(pool.clone());
+        let eligible = token_manager.eligible_credential_ids();
+        pool.rebalance(&eligible);
+        pool.update_eligible_credentials(eligible);
     }
 
     let mut anthropic_app_state = anthropic::middleware::AppState::new(&api_key)

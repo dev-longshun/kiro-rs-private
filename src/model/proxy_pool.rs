@@ -1,7 +1,8 @@
 //! 代理池管理模块
 //!
-//! 提供代理 IP 池的 CRUD、round-robin 选择和后台健康检查
+//! 提供代理 IP 池的 CRUD、sticky 绑定选择和后台健康检查
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
@@ -35,11 +36,18 @@ pub struct ProxyPoolEntry {
 #[derive(Debug, Serialize, Deserialize)]
 struct ProxyPoolFile {
     proxies: Vec<ProxyPoolEntry>,
+    /// 凭据→代理 sticky 绑定映射（credential_id → proxy_id）
+    #[serde(default)]
+    bindings: HashMap<u64, u32>,
 }
 
 /// 代理池管理器
 pub struct ProxyPoolManager {
     entries: RwLock<Vec<ProxyPoolEntry>>,
+    /// 凭据→代理 sticky 绑定映射（credential_id → proxy_id）
+    bindings: RwLock<HashMap<u64, u32>>,
+    /// 缓存的 eligible 凭据 ID 列表（供健康检查后自动 rebalance）
+    eligible_credentials: RwLock<Vec<u64>>,
     next_id: AtomicU32,
     cursor: AtomicUsize,
     file_path: PathBuf,
@@ -49,19 +57,21 @@ pub struct ProxyPoolManager {
 impl ProxyPoolManager {
     /// 从 JSON 文件加载代理池，文件不存在则空池
     pub fn load(path: PathBuf, tls_backend: TlsBackend) -> anyhow::Result<Self> {
-        let (entries, max_id) = if path.exists() {
+        let (entries, bindings, max_id) = if path.exists() {
             let content = std::fs::read_to_string(&path)?;
             let file: ProxyPoolFile = serde_json::from_str(&content)?;
             let max_id = file.proxies.iter().map(|e| e.id).max().unwrap_or(0);
-            (file.proxies, max_id)
+            (file.proxies, file.bindings, max_id)
         } else {
-            (Vec::new(), 0)
+            (Vec::new(), HashMap::new(), 0)
         };
 
-        tracing::info!("代理池已加载: {} 个代理", entries.len());
+        tracing::info!("代理池已加载: {} 个代理, {} 个绑定", entries.len(), bindings.len());
 
         Ok(Self {
             entries: RwLock::new(entries),
+            bindings: RwLock::new(bindings),
+            eligible_credentials: RwLock::new(Vec::new()),
             next_id: AtomicU32::new(max_id + 1),
             cursor: AtomicUsize::new(0),
             file_path: path,
@@ -72,8 +82,10 @@ impl ProxyPoolManager {
     /// 持久化到 JSON 文件
     fn save(&self) -> anyhow::Result<()> {
         let entries = self.entries.read();
+        let bindings = self.bindings.read();
         let file = ProxyPoolFile {
             proxies: entries.clone(),
+            bindings: bindings.clone(),
         };
         let content = serde_json::to_string_pretty(&file)?;
         std::fs::write(&self.file_path, content)?;
@@ -163,7 +175,7 @@ impl ProxyPoolManager {
         Ok(true)
     }
 
-    /// Round-robin 选择下一个可用代理（enabled + healthy）
+    /// Round-robin 选择下一个可用代理（enabled + healthy），作为 sticky 绑定的 fallback
     pub fn next_proxy(&self) -> Option<ProxyConfig> {
         let entries = self.entries.read();
         let available: Vec<&ProxyPoolEntry> = entries
@@ -180,6 +192,108 @@ impl ProxyPoolManager {
             proxy = proxy.with_auth(u, p);
         }
         Some(proxy)
+    }
+
+    /// 根据 sticky 绑定查找凭据对应的代理
+    ///
+    /// 如果凭据已绑定且目标代理仍可用，返回该代理；否则返回 None（调用方 fallback 到 round-robin）
+    pub fn next_proxy_for(&self, credential_id: u64) -> Option<ProxyConfig> {
+        let bindings = self.bindings.read();
+        let proxy_id = *bindings.get(&credential_id)?;
+        drop(bindings);
+
+        let entries = self.entries.read();
+        let entry = entries.iter().find(|e| e.id == proxy_id && e.enabled && e.healthy)?;
+        let mut proxy = ProxyConfig::new(&entry.url);
+        if let (Some(u), Some(p)) = (&entry.username, &entry.password) {
+            proxy = proxy.with_auth(u, p);
+        }
+        Some(proxy)
+    }
+
+    /// 重平衡凭据→代理绑定（贪心最少负载算法）
+    ///
+    /// 1. 收集可用代理（enabled && healthy）
+    /// 2. 清理失效绑定（代理不可用 or 凭据不在 eligible 列表中）
+    /// 3. 对未绑定的 eligible 凭据，分配到绑定数最少的代理
+    pub fn rebalance(&self, eligible_credential_ids: &[u64]) {
+        let entries = self.entries.read();
+        let available_ids: Vec<u32> = entries
+            .iter()
+            .filter(|e| e.enabled && e.healthy)
+            .map(|e| e.id)
+            .collect();
+        drop(entries);
+
+        let mut bindings = self.bindings.write();
+
+        if available_ids.is_empty() {
+            if !bindings.is_empty() {
+                tracing::warn!("无可用代理，清空所有绑定");
+                bindings.clear();
+            }
+            drop(bindings);
+            let _ = self.save();
+            return;
+        }
+
+        let eligible_set: std::collections::HashSet<u64> =
+            eligible_credential_ids.iter().copied().collect();
+        let available_set: std::collections::HashSet<u32> =
+            available_ids.iter().copied().collect();
+
+        // 清理失效绑定
+        let before = bindings.len();
+        bindings.retain(|cred_id, proxy_id| {
+            eligible_set.contains(cred_id) && available_set.contains(proxy_id)
+        });
+        let removed = before - bindings.len();
+        if removed > 0 {
+            tracing::info!("清理了 {} 个失效绑定", removed);
+        }
+
+        // 统计每个代理当前绑定数
+        let mut load: HashMap<u32, usize> = available_ids.iter().map(|&id| (id, 0)).collect();
+        for proxy_id in bindings.values() {
+            if let Some(count) = load.get_mut(proxy_id) {
+                *count += 1;
+            }
+        }
+
+        // 对未绑定的 eligible 凭据分配到最少负载的代理
+        let mut assigned = 0usize;
+        for &cred_id in eligible_credential_ids {
+            if bindings.contains_key(&cred_id) {
+                continue;
+            }
+            // 找绑定数最少的代理（相同负载时取 ID 最小的，保证确定性）
+            let best_proxy_id = load
+                .iter()
+                .min_by_key(|&(pid, count)| (count, pid))
+                .map(|(&pid, _)| pid);
+            if let Some(pid) = best_proxy_id {
+                bindings.insert(cred_id, pid);
+                *load.get_mut(&pid).unwrap() += 1;
+                assigned += 1;
+            }
+        }
+
+        if assigned > 0 {
+            tracing::info!("新分配了 {} 个凭据绑定", assigned);
+        }
+
+        drop(bindings);
+        let _ = self.save();
+    }
+
+    /// 返回绑定映射快照（credential_id → proxy_id）
+    pub fn get_bindings(&self) -> HashMap<u64, u32> {
+        self.bindings.read().clone()
+    }
+
+    /// 更新缓存的 eligible 凭据列表（供健康检查后自动 rebalance）
+    pub fn update_eligible_credentials(&self, ids: Vec<u64>) {
+        *self.eligible_credentials.write() = ids;
     }
 
     /// 对单个代理执行健康检查
@@ -260,6 +374,7 @@ impl ProxyPoolManager {
             .await;
 
         let now = chrono::Utc::now().to_rfc3339();
+        let mut availability_changed = false;
         let mut entries = self.entries.write();
         for (id, healthy, latency_ms) in results {
             if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
@@ -268,6 +383,7 @@ impl ProxyPoolManager {
                 if healthy {
                     if !entry.healthy {
                         tracing::info!("代理 #{} ({}) 已恢复健康", entry.id, entry.name);
+                        availability_changed = true;
                     }
                     entry.healthy = true;
                     entry.consecutive_failures = 0;
@@ -279,12 +395,22 @@ impl ProxyPoolManager {
                             entry.id, entry.name, entry.consecutive_failures
                         );
                         entry.healthy = false;
+                        availability_changed = true;
                     }
                 }
             }
         }
         drop(entries);
         let _ = self.save();
+
+        // 代理可用性变化时，用缓存的 eligible 列表自动 rebalance
+        if availability_changed {
+            let eligible = self.eligible_credentials.read().clone();
+            if !eligible.is_empty() {
+                tracing::info!("代理可用性变化，触发绑定重平衡");
+                self.rebalance(&eligible);
+            }
+        }
     }
 
     /// 通过代理连接 api.anthropic.com:443 测试连通性

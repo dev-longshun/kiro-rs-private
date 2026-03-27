@@ -30,6 +30,7 @@ import {
   deleteProxy,
   setProxyEnabled,
   checkProxy,
+  getProxyBindings,
 } from '@/api/credentials'
 import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest, AddProxyRequest, UpdateProxyRequest } from '@/types/api'
 
@@ -341,5 +342,13 @@ export function useCheckProxy() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
     },
+  })
+}
+
+export function useProxyBindings() {
+  return useQuery({
+    queryKey: ['proxyBindings'],
+    queryFn: getProxyBindings,
+    refetchInterval: 30000,
   })
 }

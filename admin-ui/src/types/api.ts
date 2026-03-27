@@ -202,3 +202,15 @@ export interface UpdateProxyRequest {
   username?: string | null
   password?: string | null
 }
+
+export interface ProxyBindingEntry {
+  proxyId: number
+  proxyName: string
+  credentials: BoundCredentialInfo[]
+}
+
+export interface BoundCredentialInfo {
+  id: number
+  email: string | null
+  disabled: boolean
+}

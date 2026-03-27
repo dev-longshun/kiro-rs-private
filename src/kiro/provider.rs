@@ -112,17 +112,19 @@ impl KiroProvider {
 
     /// 根据凭据的代理配置获取（或创建并缓存）对应的 reqwest::Client
     ///
-    /// 代理解析优先级：凭据级代理 > 代理池轮询 > 全局代理 > 直连
-    fn client_for(&self, credentials: &KiroCredentials) -> anyhow::Result<Client> {
+    /// 代理解析优先级：凭据级代理 > 代理池 sticky 绑定 > 代理池轮询 > 全局代理 > 直连
+    fn client_for(&self, credential_id: u64, credentials: &KiroCredentials) -> anyhow::Result<Client> {
         let effective = match credentials.proxy_url.as_deref() {
             // 凭据显式设了 "direct" → 无代理
             Some(url) if url.eq_ignore_ascii_case("direct") => None,
             // 凭据有自己的代理 → 用凭据的
             Some(_) => credentials.effective_proxy(None),
-            // 凭据没设代理 → 尝试代理池 → 全局代理 → 直连
+            // 凭据没设代理 → 尝试 sticky 绑定 → 代理池轮询 → 全局代理 → 直连
             None => {
                 if let Some(pool) = &self.proxy_pool {
-                    if let Some(proxy) = pool.next_proxy() {
+                    if let Some(proxy) = pool.next_proxy_for(credential_id) {
+                        Some(proxy)
+                    } else if let Some(proxy) = pool.next_proxy() {
                         Some(proxy)
                     } else {
                         self.global_proxy.clone()
@@ -412,10 +414,9 @@ impl KiroProvider {
 
             // 发送请求
             let response = match self
-                .client_for(&ctx.credentials)?
+                .client_for(ctx.id, &ctx.credentials)?
                 .post(&url)
-                .headers(headers)
-                .body(request_body.to_string())
+                .headers(headers)                .body(request_body.to_string())
                 .send()
                 .await
             {
@@ -604,10 +605,9 @@ impl KiroProvider {
 
             // 发送请求
             let response = match self
-                .client_for(&ctx.credentials)?
+                .client_for(ctx.id, &ctx.credentials)?
                 .post(&url)
-                .headers(headers)
-                .body(request_body.to_string())
+                .headers(headers)                .body(request_body.to_string())
                 .send()
                 .await
             {

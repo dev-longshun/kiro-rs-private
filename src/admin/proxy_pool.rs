@@ -1,5 +1,7 @@
 //! Admin 代理池管理处理器
 
+use std::collections::HashMap;
+
 use axum::{
     Json,
     extract::{Path, State},
@@ -10,8 +12,8 @@ use axum::{
 use super::{
     middleware::AdminState,
     types::{
-        AddProxyRequest, AdminErrorResponse, SetProxyEnabledRequest, SuccessResponse,
-        UpdateProxyRequest,
+        AddProxyRequest, AdminErrorResponse, BoundCredentialInfo, ProxyBindingEntry,
+        SetProxyEnabledRequest, SuccessResponse, UpdateProxyRequest,
     },
 };
 
@@ -140,4 +142,59 @@ pub async fn check_proxy(
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
         }
     }
+}
+
+/// GET /api/admin/proxy-pool/bindings
+///
+/// 返回每个代理当前绑定的凭据列表
+pub async fn get_proxy_bindings(State(state): State<AdminState>) -> impl IntoResponse {
+    let Some(pool) = &state.proxy_pool else {
+        let error = AdminErrorResponse::internal_error("代理池未启用");
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response();
+    };
+
+    let bindings = pool.get_bindings();
+    let proxies = pool.list();
+    let cred_status = state.service.get_all_credentials();
+
+    // 构建 credential_id → (email, disabled) 映射
+    let cred_info: HashMap<u64, (Option<String>, bool)> = cred_status
+        .credentials
+        .iter()
+        .map(|c| (c.id, (c.email.clone(), c.disabled)))
+        .collect();
+
+    // 按 proxy_id 分组
+    let mut proxy_bindings_map: HashMap<u32, Vec<BoundCredentialInfo>> = HashMap::new();
+    for (&cred_id, &proxy_id) in &bindings {
+        let (email, disabled) = cred_info
+            .get(&cred_id)
+            .cloned()
+            .unwrap_or((None, false));
+        proxy_bindings_map
+            .entry(proxy_id)
+            .or_default()
+            .push(BoundCredentialInfo {
+                id: cred_id,
+                email,
+                disabled,
+            });
+    }
+
+    // 为所有代理生成绑定条目（包括没有绑定的代理）
+    let mut result: Vec<ProxyBindingEntry> = proxies
+        .iter()
+        .map(|p| {
+            let mut credentials = proxy_bindings_map.remove(&p.id).unwrap_or_default();
+            credentials.sort_by_key(|c| c.id);
+            ProxyBindingEntry {
+                proxy_id: p.id,
+                proxy_name: p.name.clone(),
+                credentials,
+            }
+        })
+        .collect();
+    result.sort_by_key(|e| e.proxy_id);
+
+    Json(result).into_response()
 }
