@@ -241,19 +241,31 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
         try {
           const clientId = cred.clientId?.trim() || undefined
           const clientSecret = cred.clientSecret?.trim() || undefined
-          const authMethod = clientId && clientSecret ? 'idc' : 'social'
+
+          // 优先使用 KAM 导出的 authMethod / provider 字段判断认证方式
+          // Social 登录的账号（Google/GitHub 等）也可能携带 clientId/clientSecret，
+          // 但它们的 refreshToken 只能通过 Social 端点刷新，不能走 IdC OIDC 端点
+          const kamAuthMethod = cred.authMethod?.trim().toLowerCase()
+          let authMethod: 'social' | 'idc'
+          if (kamAuthMethod === 'social' || kamAuthMethod === 'idc' || kamAuthMethod === 'builder-id' || kamAuthMethod === 'iam') {
+            authMethod = kamAuthMethod === 'social' ? 'social' : 'idc'
+          } else {
+            // 兜底：无 authMethod 时按原逻辑判断
+            authMethod = clientId && clientSecret ? 'idc' : 'social'
+          }
 
           // idc 模式下必须同时提供 clientId 和 clientSecret
-          if (authMethod === 'social' && (clientId || clientSecret)) {
+          if (authMethod === 'idc' && (!clientId || !clientSecret)) {
             throw new Error('idc 模式需要同时提供 clientId 和 clientSecret')
           }
 
+          // Social 模式不传 clientId/clientSecret，避免后端误判
           const addedCred = await addCredential({
             refreshToken: token,
             authMethod,
             authRegion: cred.region?.trim() || undefined,
-            clientId,
-            clientSecret,
+            clientId: authMethod === 'idc' ? clientId : undefined,
+            clientSecret: authMethod === 'idc' ? clientSecret : undefined,
             machineId: account.machineId?.trim() || undefined,
           })
 
