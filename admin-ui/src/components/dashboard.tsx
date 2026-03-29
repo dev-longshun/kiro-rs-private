@@ -503,7 +503,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
   // 凭据并发限制下拉菜单
   const [concurrencyDropdownOpen, setConcurrencyDropdownOpen] = useState(false)
-  const concurrencySteps = [0, 50, 100, 150, 200]
+  const concurrencySteps = [0, 1, 2, 3, 5, 10]
   const handleSetConcurrency = (limit: number) => {
     setConcurrencyDropdownOpen(false)
     setCredentialConcurrency(limit, {
@@ -679,7 +679,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                           onClick={() => handleSetConcurrency(limit)}
                           className={`w-full text-left rounded-sm px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground ${isCurrent ? 'bg-accent font-medium' : ''}`}
                         >
-                          {limit === 0 ? '不限制' : limit}{limit === 100 ? ' (默认)' : ''}
+                          {limit === 0 ? '不限制' : limit}{limit === 3 ? ' (推荐)' : ''}
                         </button>
                       )
                     })}

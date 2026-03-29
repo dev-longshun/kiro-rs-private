@@ -178,7 +178,7 @@ fn default_pool_max_idle_per_host() -> usize {
 }
 
 fn default_max_concurrent_per_credential() -> usize {
-    100
+    3
 }
 
 impl Default for Config {
