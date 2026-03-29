@@ -8,7 +8,7 @@ use axum::{
 use super::{
     api_keys::{
         create_api_key, delete_api_key, get_all_usage, get_key_usage, get_rpm, get_server_info,
-        list_api_keys, reset_key_usage, update_api_key,
+        get_user_concurrency, list_api_keys, reset_key_usage, set_user_concurrency, update_api_key,
     },
     handlers::{
         add_credential, delete_credential, get_all_credentials, get_credential_balance,
@@ -54,6 +54,10 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route(
             "/config/credential-concurrency",
             get(get_credential_concurrency).put(set_credential_concurrency),
+        )
+        .route(
+            "/config/user-concurrency",
+            get(get_user_concurrency).put(set_user_concurrency),
         )
         // API Key 管理
         .route("/server-info", get(get_server_info))

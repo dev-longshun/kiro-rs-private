@@ -152,6 +152,18 @@ export async function setCredentialConcurrency(limit: number): Promise<Credentia
   return data
 }
 
+// 获取用户并发限制
+export async function getUserConcurrency(): Promise<{ limit: number }> {
+  const { data } = await api.get<{ limit: number }>('/config/user-concurrency')
+  return data
+}
+
+// 设置用户并发限制
+export async function setUserConcurrency(limit: number): Promise<{ limit: number }> {
+  const { data } = await api.put<{ limit: number }>('/config/user-concurrency', { limit })
+  return data
+}
+
 // ============ 服务器信息 ============
 
 // 获取服务器连接信息

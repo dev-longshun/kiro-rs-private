@@ -111,6 +111,10 @@ pub struct Config {
     #[serde(default = "default_max_concurrent_per_credential")]
     pub max_concurrent_per_credential: usize,
 
+    /// 单用户（API Key）最大并发请求数（0 表示不限制）
+    #[serde(default = "default_max_concurrent_per_api_key")]
+    pub max_concurrent_per_api_key: usize,
+
     /// 连接池每个 host 最大空闲连接数
     #[serde(default = "default_pool_max_idle_per_host")]
     pub pool_max_idle_per_host: usize,
@@ -181,6 +185,10 @@ fn default_max_concurrent_per_credential() -> usize {
     3
 }
 
+fn default_max_concurrent_per_api_key() -> usize {
+    0
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -208,6 +216,7 @@ impl Default for Config {
             max_concurrent_requests: default_max_concurrent_requests(),
             cooldown_secs: default_cooldown_secs(),
             max_concurrent_per_credential: default_max_concurrent_per_credential(),
+            max_concurrent_per_api_key: default_max_concurrent_per_api_key(),
             pool_max_idle_per_host: default_pool_max_idle_per_host(),
             config_path: None,
         }

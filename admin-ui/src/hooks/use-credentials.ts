@@ -16,6 +16,8 @@ import {
   setCacheCreationRatio,
   getCredentialConcurrency,
   setCredentialConcurrency,
+  getUserConcurrency,
+  setUserConcurrency,
   getServerInfo,
   getApiKeys,
   createApiKey,
@@ -194,6 +196,23 @@ export function useSetCredentialConcurrency() {
     mutationFn: setCredentialConcurrency,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['credentialConcurrency'] })
+    },
+  })
+}
+
+export function useUserConcurrency() {
+  return useQuery({
+    queryKey: ['userConcurrency'],
+    queryFn: getUserConcurrency,
+  })
+}
+
+export function useSetUserConcurrency() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: setUserConcurrency,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['userConcurrency'] })
     },
   })
 }

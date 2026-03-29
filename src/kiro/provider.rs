@@ -54,6 +54,12 @@ pub struct KiroProvider {
     rpm_tracker: Option<Arc<RpmTracker>>,
     /// 代理池（可选，用于 round-robin 分配代理）
     proxy_pool: Option<Arc<ProxyPoolManager>>,
+    /// Per-API-Key 并发信号量池
+    api_key_limits: Arc<Mutex<HashMap<u32, Arc<Semaphore>>>>,
+    /// 单用户最大并发数
+    max_concurrent_per_api_key: Arc<parking_lot::Mutex<usize>>,
+    /// 上次创建用户信号量时的限制值
+    last_api_key_limit: Mutex<usize>,
 }
 
 impl KiroProvider {
@@ -95,6 +101,9 @@ impl KiroProvider {
             last_credential_limit: Mutex::new(max_per_credential),
             rpm_tracker: None,
             proxy_pool: None,
+            api_key_limits: Arc::new(Mutex::new(HashMap::new())),
+            max_concurrent_per_api_key: Arc::new(parking_lot::Mutex::new(0)),
+            last_api_key_limit: Mutex::new(0),
         }
     }
 
@@ -185,6 +194,36 @@ impl KiroProvider {
     /// 获取并发信号量池的共享引用（用于 admin 监控）
     pub fn credential_limits_shared(&self) -> (Arc<Mutex<HashMap<u64, Arc<Semaphore>>>>, Arc<parking_lot::Mutex<usize>>) {
         (self.credential_limits.clone(), self.max_concurrent_per_credential.clone())
+    }
+
+    /// 获取指定 API Key 的并发信号量（若限制为 0 则返回 None）
+    fn api_key_semaphore(&self, id: u32) -> Option<Arc<Semaphore>> {
+        let limit = *self.max_concurrent_per_api_key.lock();
+        if limit == 0 {
+            return None;
+        }
+        let mut pool = self.api_key_limits.lock();
+        let mut last = self.last_api_key_limit.lock();
+        if *last != limit {
+            pool.clear();
+            *last = limit;
+        }
+        Some(pool.entry(id).or_insert_with(|| Arc::new(Semaphore::new(limit))).clone())
+    }
+
+    /// 设置单用户最大并发数
+    pub fn set_max_concurrent_per_api_key(&self, limit: usize) {
+        *self.max_concurrent_per_api_key.lock() = limit;
+    }
+
+    /// 获取单用户最大并发数
+    pub fn get_max_concurrent_per_api_key(&self) -> usize {
+        *self.max_concurrent_per_api_key.lock()
+    }
+
+    /// 获取用户并发共享引用（用于 admin 监控）
+    pub fn api_key_limits_shared(&self) -> (Arc<Mutex<HashMap<u32, Arc<Semaphore>>>>, Arc<parking_lot::Mutex<usize>>) {
+        (self.api_key_limits.clone(), self.max_concurrent_per_api_key.clone())
     }
 
     /// 获取 API 基础 URL（使用 config 级 api_region）
@@ -360,36 +399,16 @@ impl KiroProvider {
     ///
     /// # Returns
     /// 返回原始的 HTTP Response，不做解析
-    pub async fn call_api(&self, request_body: &str) -> anyhow::Result<reqwest::Response> {
-        self.call_api_with_retry(request_body, false).await
+    pub async fn call_api(&self, request_body: &str, api_key_id: Option<u32>) -> anyhow::Result<reqwest::Response> {
+        self.call_api_with_retry(request_body, false, api_key_id).await
     }
 
     /// 发送流式 API 请求
-    ///
-    /// 支持多凭据故障转移：
-    /// - 400 Bad Request: 直接返回错误，不计入凭据失败
-    /// - 401/403: 视为凭据/权限问题，计入失败次数并允许故障转移
-    /// - 402 MONTHLY_REQUEST_COUNT: 视为额度用尽，禁用凭据并切换
-    /// - 429/5xx/网络等瞬态错误: 重试但不禁用或切换凭据（避免误把所有凭据锁死）
-    ///
-    /// # Arguments
-    /// * `request_body` - JSON 格式的请求体字符串
-    ///
-    /// # Returns
-    /// 返回原始的 HTTP Response，调用方负责处理流式数据
-    pub async fn call_api_stream(&self, request_body: &str) -> anyhow::Result<reqwest::Response> {
-        self.call_api_with_retry(request_body, true).await
+    pub async fn call_api_stream(&self, request_body: &str, api_key_id: Option<u32>) -> anyhow::Result<reqwest::Response> {
+        self.call_api_with_retry(request_body, true, api_key_id).await
     }
 
     /// 发送 MCP API 请求
-    ///
-    /// 用于 WebSearch 等工具调用
-    ///
-    /// # Arguments
-    /// * `request_body` - JSON 格式的 MCP 请求体字符串
-    ///
-    /// # Returns
-    /// 返回原始的 HTTP Response
     pub async fn call_mcp(&self, request_body: &str) -> anyhow::Result<reqwest::Response> {
         self.call_mcp_with_retry(request_body).await
     }
@@ -583,7 +602,14 @@ impl KiroProvider {
         &self,
         request_body: &str,
         is_stream: bool,
+        api_key_id: Option<u32>,
     ) -> anyhow::Result<reqwest::Response> {
+        // 获取 per-API-Key 并发 permit（若配置了限制）
+        let _api_key_permit = match api_key_id.and_then(|id| self.api_key_semaphore(id)) {
+            Some(sem) => Some(sem.acquire_owned().await.map_err(|e| anyhow::anyhow!(e))?),
+            None => None,
+        };
+
         let total_credentials = self.token_manager.total_count();
         let max_retries = (total_credentials * MAX_RETRIES_PER_CREDENTIAL).min(MAX_TOTAL_RETRIES);
         let mut last_error: Option<anyhow::Error> = None;

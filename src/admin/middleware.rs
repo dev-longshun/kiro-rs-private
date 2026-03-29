@@ -33,6 +33,8 @@ pub struct AdminState {
     /// 并发信号量池（与 KiroProvider 共享，用于监控）
     pub credential_limits: Option<Arc<parking_lot::Mutex<HashMap<u64, Arc<Semaphore>>>>>,
     pub max_concurrent_per_credential: Option<Arc<parking_lot::Mutex<usize>>>,
+    /// 用户并发限制引用（与 KiroProvider 共享）
+    pub max_concurrent_per_api_key: Option<Arc<parking_lot::Mutex<usize>>>,
 }
 
 impl AdminState {
@@ -47,6 +49,7 @@ impl AdminState {
             proxy_pool: None,
             credential_limits: None,
             max_concurrent_per_credential: None,
+            max_concurrent_per_api_key: None,
         }
     }
 

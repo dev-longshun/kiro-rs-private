@@ -14,7 +14,7 @@ import { KamImportDialog } from '@/components/kam-import-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ApiKeysPanel } from '@/components/api-keys-panel'
 import { ProxyPoolPanel } from '@/components/proxy-pool-panel'
-import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useCacheSimulationRatio, useSetCacheSimulationRatio, useCacheCreationRatio, useSetCacheCreationRatio, useCredentialConcurrency, useSetCredentialConcurrency, useRpm, useProxyBindings } from '@/hooks/use-credentials'
+import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useCacheSimulationRatio, useSetCacheSimulationRatio, useCacheCreationRatio, useSetCacheCreationRatio, useCredentialConcurrency, useSetCredentialConcurrency, useUserConcurrency, useSetUserConcurrency, useRpm, useProxyBindings } from '@/hooks/use-credentials'
 import { getCredentialBalance } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import type { BalanceResponse } from '@/types/api'
@@ -63,6 +63,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const { mutate: setCacheCreationRatio, isPending: isSettingCacheCreation } = useSetCacheCreationRatio()
   const { data: concurrencyData, isLoading: isLoadingConcurrency } = useCredentialConcurrency()
   const { mutate: setCredentialConcurrency, isPending: isSettingConcurrency } = useSetCredentialConcurrency()
+  const { data: userConcurrencyData, isLoading: isLoadingUserConcurrency } = useUserConcurrency()
+  const { mutate: setUserConcurrency, isPending: isSettingUserConcurrency } = useSetUserConcurrency()
 
   // 计算分页
   const totalPages = Math.ceil((data?.credentials.length || 0) / itemsPerPage)
@@ -516,6 +518,21 @@ export function Dashboard({ onLogout }: DashboardProps) {
     })
   }
 
+  // 用户并发限制下拉菜单
+  const [userConcurrencyDropdownOpen, setUserConcurrencyDropdownOpen] = useState(false)
+  const userConcurrencySteps = [0, 1, 2, 3, 5, 10]
+  const handleSetUserConcurrency = (limit: number) => {
+    setUserConcurrencyDropdownOpen(false)
+    setUserConcurrency(limit, {
+      onSuccess: () => {
+        toast.success(`用户并发限制已设置为 ${limit === 0 ? '不限制' : limit}`)
+      },
+      onError: (error) => {
+        toast.error(`设置失败: ${extractErrorMessage(error)}`)
+      }
+    })
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -665,14 +682,14 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 disabled={isLoadingConcurrency || isSettingConcurrency}
                 title="设置单凭据并发限制"
               >
-                {isLoadingConcurrency ? '加载中...' : `并发 ${(concurrencyData?.limit ?? 100) === 0 ? '不限' : concurrencyData?.limit ?? 100}`}
+                {isLoadingConcurrency ? '加载中...' : `凭据并发 ${(concurrencyData?.limit ?? 3) === 0 ? '不限' : concurrencyData?.limit ?? 3}`}
               </Button>
               {concurrencyDropdownOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setConcurrencyDropdownOpen(false)} />
                   <div className="absolute right-0 top-full mt-1 z-50 min-w-[120px] rounded-md border bg-popover p-1 shadow-md">
                     {concurrencySteps.map(limit => {
-                      const isCurrent = (concurrencyData?.limit ?? 100) === limit
+                      const isCurrent = (concurrencyData?.limit ?? 3) === limit
                       return (
                         <button
                           key={limit}
@@ -680,6 +697,36 @@ export function Dashboard({ onLogout }: DashboardProps) {
                           className={`w-full text-left rounded-sm px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground ${isCurrent ? 'bg-accent font-medium' : ''}`}
                         >
                           {limit === 0 ? '不限制' : limit}{limit === 3 ? ' (推荐)' : ''}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="relative hidden sm:inline-flex">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setUserConcurrencyDropdownOpen(!userConcurrencyDropdownOpen)}
+                disabled={isLoadingUserConcurrency || isSettingUserConcurrency}
+                title="设置单用户并发限制"
+              >
+                {isLoadingUserConcurrency ? '加载中...' : `用户并发 ${(userConcurrencyData?.limit ?? 0) === 0 ? '不限' : userConcurrencyData?.limit}`}
+              </Button>
+              {userConcurrencyDropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setUserConcurrencyDropdownOpen(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[120px] rounded-md border bg-popover p-1 shadow-md">
+                    {userConcurrencySteps.map(limit => {
+                      const isCurrent = (userConcurrencyData?.limit ?? 0) === limit
+                      return (
+                        <button
+                          key={limit}
+                          onClick={() => handleSetUserConcurrency(limit)}
+                          className={`w-full text-left rounded-sm px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground ${isCurrent ? 'bg-accent font-medium' : ''}`}
+                        >
+                          {limit === 0 ? '不限制' : limit}
                         </button>
                       )
                     })}

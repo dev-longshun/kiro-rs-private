@@ -189,8 +189,12 @@ async fn async_main() {
         pool.update_eligible_credentials(eligible);
     }
 
+    // 设置用户并发限制
+    kiro_provider.set_max_concurrent_per_api_key(config.max_concurrent_per_api_key);
+
     // 提取并发信号量共享引用（在 provider 被 move 之前）
     let (cred_limits_shared, max_per_cred_shared) = kiro_provider.credential_limits_shared();
+    let (_, max_per_key_shared) = kiro_provider.api_key_limits_shared();
 
     let mut anthropic_app_state = anthropic::middleware::AppState::new(&api_key)
         .with_rpm_tracker(rpm_tracker.clone())
@@ -229,6 +233,7 @@ async fn async_main() {
                 admin_state = admin_state.with_proxy_pool(pool.clone());
             }
             admin_state = admin_state.with_concurrency_refs(cred_limits_shared.clone(), max_per_cred_shared.clone());
+            admin_state.max_concurrent_per_api_key = Some(max_per_key_shared.clone());
             let admin_app = admin::create_admin_router(admin_state);
 
             // 创建 Admin UI 路由

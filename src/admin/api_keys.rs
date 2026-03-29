@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{
     middleware::AdminState,
@@ -147,6 +147,33 @@ pub async fn reset_key_usage(
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
         }
     }
+}
+
+/// GET /api/admin/config/user-concurrency
+pub async fn get_user_concurrency(State(state): State<AdminState>) -> impl IntoResponse {
+    let limit = state.max_concurrent_per_api_key
+        .as_ref()
+        .map(|m| *m.lock())
+        .unwrap_or(0);
+    Json(serde_json::json!({ "limit": limit })).into_response()
+}
+
+/// PUT /api/admin/config/user-concurrency
+pub async fn set_user_concurrency(
+    State(state): State<AdminState>,
+    Json(payload): Json<SetUserConcurrencyRequest>,
+) -> impl IntoResponse {
+    let Some(ref max_ref) = state.max_concurrent_per_api_key else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(AdminErrorResponse::internal_error("用户并发管理未启用"))).into_response();
+    };
+    *max_ref.lock() = payload.limit;
+    Json(serde_json::json!({ "limit": payload.limit })).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetUserConcurrencyRequest {
+    pub limit: usize,
 }
 
 /// GET /api/admin/rpm
