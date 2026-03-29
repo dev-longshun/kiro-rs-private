@@ -14,7 +14,7 @@ import { KamImportDialog } from '@/components/kam-import-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ApiKeysPanel } from '@/components/api-keys-panel'
 import { ProxyPoolPanel } from '@/components/proxy-pool-panel'
-import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useCacheSimulationRatio, useSetCacheSimulationRatio, useCacheCreationRatio, useSetCacheCreationRatio, useCredentialConcurrency, useSetCredentialConcurrency, useRpm } from '@/hooks/use-credentials'
+import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useCacheSimulationRatio, useSetCacheSimulationRatio, useCacheCreationRatio, useSetCacheCreationRatio, useCredentialConcurrency, useSetCredentialConcurrency, useRpm, useProxyBindings } from '@/hooks/use-credentials'
 import { getCredentialBalance } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import type { BalanceResponse } from '@/types/api'
@@ -52,6 +52,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const queryClient = useQueryClient()
   const { data, isLoading, error, refetch } = useCredentials()
   const { data: rpmData } = useRpm()
+  const { data: proxyBindingsData } = useProxyBindings()
   const { mutate: deleteCredential } = useDeleteCredential()
   const { mutate: resetFailure } = useResetFailure()
   const { data: loadBalancingData, isLoading: isLoadingMode } = useLoadBalancingMode()
@@ -854,6 +855,12 @@ export function Dashboard({ onLogout }: DashboardProps) {
                     balance={balanceMap.get(credential.id) || null}
                     loadingBalance={loadingBalanceIds.has(credential.id)}
                     rpm={rpmData?.byCredential?.[String(credential.id)] ?? 0}
+                    concurrency={rpmData?.byCredentialConcurrency?.[String(credential.id)] ?? 0}
+                    boundProxyName={
+                      proxyBindingsData
+                        ?.find(pb => pb.credentials.some(c => c.id === credential.id))
+                        ?.proxyName ?? null
+                    }
                   />
                 ))}
               </div>

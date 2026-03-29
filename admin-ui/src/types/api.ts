@@ -148,6 +148,7 @@ export interface RpmSnapshot {
   global: number
   byCredential: Record<string, number>
   byApiKey: Record<string, number>
+  byCredentialConcurrency: Record<string, number>
 }
 
 // ============ 代理池 ============

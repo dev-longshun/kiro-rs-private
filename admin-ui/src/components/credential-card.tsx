@@ -32,6 +32,8 @@ interface CredentialCardProps {
   balance: BalanceResponse | null
   loadingBalance: boolean
   rpm?: number
+  concurrency?: number
+  boundProxyName?: string | null
 }
 
 function formatLastUsed(lastUsedAt: string | null): string {
@@ -58,6 +60,8 @@ export function CredentialCard({
   balance,
   loadingBalance,
   rpm = 0,
+  concurrency = 0,
+  boundProxyName = null,
 }: CredentialCardProps) {
   const [editingPriority, setEditingPriority] = useState(false)
   const [priorityValue, setPriorityValue] = useState(String(credential.priority))
@@ -241,6 +245,14 @@ export function CredentialCard({
             <div>
               <span className="text-muted-foreground">RPM：</span>
               <span className="font-medium text-blue-600">{rpm}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">并发：</span>
+              <span className="font-medium text-orange-600">{concurrency}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">出口 IP：</span>
+              <span className="font-medium">{boundProxyName ?? '服务器直连'}</span>
             </div>
             <div className="col-span-2">
               <span className="text-muted-foreground">最后调用：</span>

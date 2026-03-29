@@ -45,7 +45,7 @@ pub struct KiroProvider {
     /// 并发控制信号量，限制同时发往上游的请求数
     concurrency_limit: Arc<Semaphore>,
     /// Per-credential 并发信号量池
-    credential_limits: Mutex<HashMap<u64, Arc<Semaphore>>>,
+    credential_limits: Arc<Mutex<HashMap<u64, Arc<Semaphore>>>>,
     /// 单凭据最大并发数（从 TokenManager 注入的动态值）
     max_concurrent_per_credential: Arc<parking_lot::Mutex<usize>>,
     /// 上次创建信号量时的限制值（用于检测变更）
@@ -90,7 +90,7 @@ impl KiroProvider {
             client_cache: Mutex::new(cache),
             tls_backend,
             concurrency_limit: Arc::new(Semaphore::new(max_concurrent)),
-            credential_limits: Mutex::new(HashMap::new()),
+            credential_limits: Arc::new(Mutex::new(HashMap::new())),
             max_concurrent_per_credential,
             last_credential_limit: Mutex::new(max_per_credential),
             rpm_tracker: None,
@@ -168,6 +168,23 @@ impl KiroProvider {
         }
 
         Some(pool.entry(id).or_insert_with(|| Arc::new(Semaphore::new(limit))).clone())
+    }
+
+    /// 获取每个凭据的当前并发数快照
+    pub fn credential_concurrency_snapshot(&self) -> HashMap<u64, usize> {
+        let limit = *self.max_concurrent_per_credential.lock();
+        if limit == 0 {
+            return HashMap::new();
+        }
+        let pool = self.credential_limits.lock();
+        pool.iter()
+            .map(|(&id, sem)| (id, limit - sem.available_permits()))
+            .collect()
+    }
+
+    /// 获取并发信号量池的共享引用（用于 admin 监控）
+    pub fn credential_limits_shared(&self) -> (Arc<Mutex<HashMap<u64, Arc<Semaphore>>>>, Arc<parking_lot::Mutex<usize>>) {
+        (self.credential_limits.clone(), self.max_concurrent_per_credential.clone())
     }
 
     /// 获取 API 基础 URL（使用 config 级 api_region）

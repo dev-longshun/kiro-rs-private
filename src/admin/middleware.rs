@@ -1,5 +1,6 @@
 //! Admin API 中间件
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -9,6 +10,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Json, Response},
 };
+use tokio::sync::Semaphore;
 
 use super::service::AdminService;
 use super::types::AdminErrorResponse;
@@ -21,20 +23,16 @@ use crate::model::usage::UsageTracker;
 /// Admin API 共享状态
 #[derive(Clone)]
 pub struct AdminState {
-    /// Admin API 密钥
     pub admin_api_key: String,
-    /// 主 API 密钥（用于前端展示）
     pub master_api_key: Option<String>,
-    /// Admin 服务
     pub service: Arc<AdminService>,
-    /// API Key 管理器（可选）
     pub api_key_manager: Option<Arc<ApiKeyManager>>,
-    /// 用量追踪器（可选）
     pub usage_tracker: Option<Arc<UsageTracker>>,
-    /// RPM 追踪器（可选）
     pub rpm_tracker: Option<Arc<RpmTracker>>,
-    /// 代理池管理器（可选）
     pub proxy_pool: Option<Arc<ProxyPoolManager>>,
+    /// 并发信号量池（与 KiroProvider 共享，用于监控）
+    pub credential_limits: Option<Arc<parking_lot::Mutex<HashMap<u64, Arc<Semaphore>>>>>,
+    pub max_concurrent_per_credential: Option<Arc<parking_lot::Mutex<usize>>>,
 }
 
 impl AdminState {
@@ -47,32 +45,40 @@ impl AdminState {
             usage_tracker: None,
             rpm_tracker: None,
             proxy_pool: None,
+            credential_limits: None,
+            max_concurrent_per_credential: None,
         }
     }
 
-    pub fn with_master_api_key(mut self, key: impl Into<String>) -> Self {
-        self.master_api_key = Some(key.into());
+    pub fn with_master_api_key(mut self, key: impl Into<String>) -> Self { self.master_api_key = Some(key.into()); self }
+    pub fn with_api_key_manager(mut self, m: Arc<ApiKeyManager>) -> Self { self.api_key_manager = Some(m); self }
+    pub fn with_usage_tracker(mut self, t: Arc<UsageTracker>) -> Self { self.usage_tracker = Some(t); self }
+    pub fn with_rpm_tracker(mut self, t: Arc<RpmTracker>) -> Self { self.rpm_tracker = Some(t); self }
+    pub fn with_proxy_pool(mut self, p: Arc<ProxyPoolManager>) -> Self { self.proxy_pool = Some(p); self }
+
+    pub fn with_concurrency_refs(
+        mut self,
+        limits: Arc<parking_lot::Mutex<HashMap<u64, Arc<Semaphore>>>>,
+        max_per: Arc<parking_lot::Mutex<usize>>,
+    ) -> Self {
+        self.credential_limits = Some(limits);
+        self.max_concurrent_per_credential = Some(max_per);
         self
     }
 
-    pub fn with_api_key_manager(mut self, manager: Arc<ApiKeyManager>) -> Self {
-        self.api_key_manager = Some(manager);
-        self
-    }
-
-    pub fn with_usage_tracker(mut self, tracker: Arc<UsageTracker>) -> Self {
-        self.usage_tracker = Some(tracker);
-        self
-    }
-
-    pub fn with_rpm_tracker(mut self, tracker: Arc<RpmTracker>) -> Self {
-        self.rpm_tracker = Some(tracker);
-        self
-    }
-
-    pub fn with_proxy_pool(mut self, pool: Arc<ProxyPoolManager>) -> Self {
-        self.proxy_pool = Some(pool);
-        self
+    /// 获取每个凭据的当前并发数
+    pub fn credential_concurrency_snapshot(&self) -> HashMap<u64, usize> {
+        let (Some(limits_ref), Some(max_ref)) = (&self.credential_limits, &self.max_concurrent_per_credential) else {
+            return HashMap::new();
+        };
+        let limit = *max_ref.lock();
+        if limit == 0 {
+            return HashMap::new();
+        }
+        let pool = limits_ref.lock();
+        pool.iter()
+            .map(|(&id, sem)| (id, limit - sem.available_permits()))
+            .collect()
     }
 }
 
@@ -83,7 +89,6 @@ pub async fn admin_auth_middleware(
     next: Next,
 ) -> Response {
     let api_key = auth::extract_api_key(&request);
-
     match api_key {
         Some(key) if auth::constant_time_eq(&key, &state.admin_api_key) => next.run(request).await,
         _ => {

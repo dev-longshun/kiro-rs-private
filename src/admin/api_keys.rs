@@ -150,11 +150,30 @@ pub async fn reset_key_usage(
 }
 
 /// GET /api/admin/rpm
-/// 获取实时 RPM 数据
+/// 获取实时 RPM 和并发数据
 pub async fn get_rpm(State(state): State<AdminState>) -> impl IntoResponse {
     let Some(rpm_tracker) = &state.rpm_tracker else {
         let error = AdminErrorResponse::internal_error("RPM 监控未启用");
         return (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response();
     };
-    Json(rpm_tracker.snapshot()).into_response()
+    let snapshot = rpm_tracker.snapshot();
+
+    // 附加并发数据
+    let concurrency = state.credential_concurrency_snapshot();
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RpmWithConcurrency {
+        global: u64,
+        by_credential: std::collections::HashMap<u64, u64>,
+        by_api_key: std::collections::HashMap<u32, u64>,
+        by_credential_concurrency: std::collections::HashMap<u64, usize>,
+    }
+
+    Json(RpmWithConcurrency {
+        global: snapshot.global,
+        by_credential: snapshot.by_credential,
+        by_api_key: snapshot.by_api_key,
+        by_credential_concurrency: concurrency,
+    }).into_response()
 }

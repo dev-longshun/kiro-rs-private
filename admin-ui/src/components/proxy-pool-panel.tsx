@@ -383,10 +383,16 @@ export function ProxyPoolPanel() {
                   {/* 绑定凭据列表 */}
                   {(() => {
                     const boundCreds = bindingsMap.get(entry.id) ?? []
+                    const overloaded = boundCreds.filter(c => !c.disabled).length >= 2
                     return boundCreds.length > 0 ? (
                       <div className="space-y-1">
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-xs text-muted-foreground flex items-center gap-1">
                           绑定凭据 ({boundCreds.length})
+                          {overloaded && (
+                            <span className="text-amber-500 font-medium" title="一个 IP 绑定了多个活跃凭据，风控风险较高">
+                              ⚠ 过载
+                            </span>
+                          )}
                         </div>
                         <div className="flex flex-wrap gap-1">
                           {boundCreds.map(c => (
